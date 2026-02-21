@@ -1,0 +1,37 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TZ: ${TZ:-Asia/Seoul}
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    user: vscode
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace:cached
+      - claude-code-bashhistory:/commandhistory
+      - claude-code-config:/home/vscode/.claude
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - ENVIRONMENT=development
+      - CLAUDE_CONFIG_DIR=/home/vscode/.claude
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+    stdin_open: true
+    tty: true
+    command: >
+      sh -c "zsh && sudo /usr/local/bin/init-firewall.sh"
+    networks:
+      - bsage-network
+
+volumes:
+  claude-code-bashhistory:
+  claude-code-config:
+
+networks:
+  bsage-network:
+    driver: bridge
