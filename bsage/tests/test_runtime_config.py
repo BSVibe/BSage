@@ -8,6 +8,18 @@ import pytest
 from bsage.core.runtime_config import RuntimeConfig
 
 
+def _cfg(**overrides: object) -> RuntimeConfig:
+    """Create a RuntimeConfig with sensible defaults."""
+    defaults = {
+        "llm_model": "model-a",
+        "llm_api_key": "",
+        "llm_api_base": None,
+        "safe_mode": True,
+    }
+    defaults.update(overrides)
+    return RuntimeConfig(**defaults)
+
+
 class TestRuntimeConfigInit:
     """Test RuntimeConfig initialization."""
 
@@ -33,62 +45,78 @@ class TestRuntimeConfigInit:
         assert config.llm_api_base == "http://localhost:11434"
         assert config.safe_mode is False
 
+    def test_unknown_attribute_raises(self) -> None:
+        config = _cfg()
+        with pytest.raises(AttributeError):
+            _ = config.nonexistent_field
+
 
 class TestRuntimeConfigUpdate:
-    """Test RuntimeConfig update methods."""
+    """Test RuntimeConfig.update() method."""
 
-    def test_update_llm_model(self) -> None:
-        config = RuntimeConfig("model-a", "", None, True)
-        config.update_llm(model="model-b")
+    def test_update_model(self) -> None:
+        config = _cfg()
+        config.update(llm_model="model-b")
         assert config.llm_model == "model-b"
 
-    def test_update_llm_api_key(self) -> None:
-        config = RuntimeConfig("model-a", "old-key", None, True)
-        config.update_llm(api_key="new-key")
+    def test_update_api_key(self) -> None:
+        config = _cfg(llm_api_key="old-key")
+        config.update(llm_api_key="new-key")
         assert config.llm_api_key == "new-key"
         assert config.llm_model == "model-a"  # unchanged
 
-    def test_update_llm_api_base(self) -> None:
-        config = RuntimeConfig("model-a", "", None, True)
-        config.update_llm(api_base="http://localhost:11434")
+    def test_update_api_base(self) -> None:
+        config = _cfg()
+        config.update(llm_api_base="http://localhost:11434")
         assert config.llm_api_base == "http://localhost:11434"
 
-    def test_update_llm_api_base_to_none(self) -> None:
-        config = RuntimeConfig("model-a", "", "http://old", True)
-        config.update_llm(api_base=None)
+    def test_update_api_base_to_none(self) -> None:
+        config = _cfg(llm_api_base="http://old")
+        config.update(llm_api_base=None)
         assert config.llm_api_base is None
 
-    def test_update_llm_empty_model_raises(self) -> None:
-        config = RuntimeConfig("model-a", "", None, True)
+    def test_update_empty_model_raises(self) -> None:
+        config = _cfg()
         with pytest.raises(ValueError, match="cannot be empty"):
-            config.update_llm(model="")
+            config.update(llm_model="")
 
-    def test_update_llm_whitespace_model_raises(self) -> None:
-        config = RuntimeConfig("model-a", "", None, True)
+    def test_update_whitespace_model_raises(self) -> None:
+        config = _cfg()
         with pytest.raises(ValueError, match="cannot be empty"):
-            config.update_llm(model="   ")
+            config.update(llm_model="   ")
 
     def test_update_safe_mode_toggle(self) -> None:
-        config = RuntimeConfig("model-a", "", None, True)
+        config = _cfg(safe_mode=True)
         assert config.safe_mode is True
-        config.update_safe_mode(False)
+        config.update(safe_mode=False)
         assert config.safe_mode is False
-        config.update_safe_mode(True)
+        config.update(safe_mode=True)
         assert config.safe_mode is True
+
+    def test_update_multiple_fields_atomically(self) -> None:
+        config = _cfg()
+        config.update(llm_model="model-b", safe_mode=False)
+        assert config.llm_model == "model-b"
+        assert config.safe_mode is False
+
+    def test_update_unknown_field_raises(self) -> None:
+        config = _cfg()
+        with pytest.raises(ValueError, match="Unknown config fields"):
+            config.update(nonexistent="value")
 
 
 class TestRuntimeConfigSnapshot:
     """Test snapshot() returns correct data."""
 
     def test_snapshot_excludes_api_key(self) -> None:
-        config = RuntimeConfig("model-a", "secret-key", None, True)
+        config = _cfg(llm_api_key="secret-key")
         snap = config.snapshot()
         assert "llm_api_key" not in snap
         assert snap["llm_model"] == "model-a"
         assert snap["safe_mode"] is True
 
     def test_snapshot_includes_api_base(self) -> None:
-        config = RuntimeConfig("model-a", "", "http://base", False)
+        config = _cfg(llm_api_base="http://base", safe_mode=False)
         snap = config.snapshot()
         assert snap["llm_api_base"] == "http://base"
         assert snap["safe_mode"] is False
@@ -99,8 +127,8 @@ class TestRuntimeConfigPersistence:
 
     def test_persist_creates_file(self, tmp_path) -> None:
         persist_path = tmp_path / ".bsage" / "runtime_config.json"
-        config = RuntimeConfig("model-a", "key", None, True, persist_path=persist_path)
-        config.update_safe_mode(False)
+        config = _cfg(llm_api_key="key", persist_path=persist_path)
+        config.update(safe_mode=False)
 
         assert persist_path.exists()
         data = json.loads(persist_path.read_text())
@@ -108,27 +136,30 @@ class TestRuntimeConfigPersistence:
         assert data["llm_model"] == "model-a"
         assert data["llm_api_key"] == "key"
 
-    def test_persist_updates_on_llm_change(self, tmp_path) -> None:
+    def test_persist_updates_on_change(self, tmp_path) -> None:
         persist_path = tmp_path / "config.json"
-        config = RuntimeConfig("model-a", "", None, True, persist_path=persist_path)
-        config.update_llm(model="model-b")
+        config = _cfg(persist_path=persist_path)
+        config.update(llm_model="model-b")
 
         data = json.loads(persist_path.read_text())
         assert data["llm_model"] == "model-b"
 
     def test_no_persist_when_path_is_none(self) -> None:
-        config = RuntimeConfig("model-a", "", None, True, persist_path=None)
-        config.update_safe_mode(False)
+        config = _cfg(persist_path=None)
+        config.update(safe_mode=False)
         # Should not raise — just skip persistence
         assert config.safe_mode is False
 
     def test_persist_failure_does_not_raise(self, tmp_path) -> None:
         persist_path = tmp_path / "config.json"
-        config = RuntimeConfig("model-a", "", None, True, persist_path=persist_path)
+        config = _cfg(persist_path=persist_path)
 
-        with patch("bsage.core.runtime_config.Path.write_text", side_effect=OSError("disk full")):
-            # Should not raise — in-memory update succeeds, persistence fails gracefully
-            config.update_safe_mode(False)
+        with patch(
+            "bsage.core.runtime_config.Path.write_text",
+            side_effect=OSError("disk full"),
+        ):
+            # Should not raise — in-memory update succeeds
+            config.update(safe_mode=False)
 
         assert config.safe_mode is False
 

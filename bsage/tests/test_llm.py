@@ -127,7 +127,7 @@ class TestLiteLLMClient:
         assert call1.kwargs["model"] == "model-a"
 
         # Change model at runtime
-        config.update_llm(model="model-b")
+        config.update(llm_model="model-b")
         await client.chat(system="test", messages=[])
         call2 = mock_litellm.acompletion.call_args
         assert call2.kwargs["model"] == "model-b"

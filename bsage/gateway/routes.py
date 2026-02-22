@@ -78,19 +78,15 @@ def create_routes(state: AppState) -> APIRouter:
     @api_router.patch("/config")
     async def update_config(update: ConfigUpdate) -> dict[str, Any]:
         """Update runtime config. Only provided fields are changed."""
-        provided = update.model_fields_set
+        changes: dict[str, Any] = {
+            field: getattr(update, field)
+            for field in update.model_fields_set
+            if field != "safe_mode" or update.safe_mode is not None
+        }
+        if not changes:
+            return state.runtime_config.snapshot()
         try:
-            llm_kwargs: dict[str, Any] = {}
-            if "llm_model" in provided:
-                llm_kwargs["model"] = update.llm_model
-            if "llm_api_key" in provided:
-                llm_kwargs["api_key"] = update.llm_api_key
-            if "llm_api_base" in provided:
-                llm_kwargs["api_base"] = update.llm_api_base
-            if llm_kwargs:
-                state.runtime_config.update_llm(**llm_kwargs)
-            if "safe_mode" in provided and update.safe_mode is not None:
-                state.runtime_config.update_safe_mode(update.safe_mode)
+            state.runtime_config.update(**changes)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return state.runtime_config.snapshot()

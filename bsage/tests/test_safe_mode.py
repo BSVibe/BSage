@@ -168,6 +168,6 @@ class TestSafeModeGuard:
             await guard.check(safe_skill)
 
         # Disable safe_mode at runtime → passes
-        config.update_safe_mode(False)
+        config.update(safe_mode=False)
         result = await guard.check(safe_skill)
         assert result is True
