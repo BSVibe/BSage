@@ -13,6 +13,7 @@ from bsage.core.safe_mode import SafeModeGuard
 from bsage.core.scheduler import Scheduler
 from bsage.core.skill_loader import SkillLoader
 from bsage.core.skill_runner import SkillRunner
+from bsage.garden.sync import SyncManager
 from bsage.garden.vault import Vault
 from bsage.garden.writer import GardenWriter
 
@@ -30,9 +31,12 @@ class AppState:
         persist_path = settings.credentials_dir / "runtime_config.json"
         self.runtime_config = RuntimeConfig.from_settings(settings, persist_path=persist_path)
 
+        # Sync manager (backends registered later by OutputSkills)
+        self.sync_manager = SyncManager()
+
         # Garden layer
         self.vault = Vault(settings.vault_path)
-        self.garden_writer = GardenWriter(self.vault)
+        self.garden_writer = GardenWriter(self.vault, sync_manager=self.sync_manager)
 
         # Connectors
         self.connector_manager = ConnectorManager()

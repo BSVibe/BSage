@@ -95,4 +95,9 @@ def create_routes(state: AppState) -> APIRouter:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return state.runtime_config.snapshot()
 
+    @api_router.get("/sync-backends")
+    async def list_sync_backends() -> list[str]:
+        """Return names of registered sync backends."""
+        return state.sync_manager.list_backends()
+
     return api_router

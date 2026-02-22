@@ -1,14 +1,20 @@
 """GardenWriter — writes structured markdown notes to the vault."""
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 import yaml
 
 from bsage.garden.vault import Vault
+
+if TYPE_CHECKING:
+    from bsage.garden.sync import SyncManager
 
 logger = structlog.get_logger(__name__)
 
@@ -55,12 +61,16 @@ def _build_frontmatter(metadata: dict) -> str:
 class GardenWriter:
     """Writes seeds, garden notes, and action logs to the vault.
 
+    Optionally notifies a SyncManager after each write so that
+    registered backends (S3, Git, etc.) can sync the vault.
+
     Attributes:
         vault: The Vault instance for path resolution and file access.
     """
 
-    def __init__(self, vault: Vault) -> None:
+    def __init__(self, vault: Vault, sync_manager: SyncManager | None = None) -> None:
         self._vault = vault
+        self._sync_manager = sync_manager
 
     async def write_seed(self, source: str, data: dict) -> Path:
         """Write raw collected data as a seed note.
@@ -97,6 +107,7 @@ class GardenWriter:
 
         file_path.write_text(content, encoding="utf-8")
         logger.info("seed_written", source=source, path=str(file_path))
+        await self._notify_sync("seed", file_path, source)
         return file_path
 
     async def write_garden(self, note: GardenNote | dict) -> Path:
@@ -147,6 +158,7 @@ class GardenWriter:
             note_type=note.note_type,
             path=str(file_path),
         )
+        await self._notify_sync("garden", file_path, note.source)
         return file_path
 
     async def write_action(self, skill_name: str, summary: str) -> None:
@@ -177,6 +189,7 @@ class GardenWriter:
             log_path.write_text(header + entry, encoding="utf-8")
 
         logger.info("action_logged", skill_name=skill_name, path=str(log_path))
+        await self._notify_sync("action", log_path, skill_name)
 
     async def read_notes(self, subdir: str) -> list[Path]:
         """Read notes from a vault subdirectory.
@@ -190,6 +203,19 @@ class GardenWriter:
             Sorted list of .md file paths.
         """
         return self._vault.read_notes(subdir)
+
+    async def _notify_sync(self, event_type_str: str, path: Path, source: str) -> None:
+        """Notify sync manager of a write event, if configured."""
+        if self._sync_manager is None:
+            return
+        from bsage.garden.sync import WriteEvent, WriteEventType
+
+        event = WriteEvent(
+            event_type=WriteEventType(event_type_str),
+            path=path,
+            source=source,
+        )
+        await self._sync_manager.notify(event)
 
     @staticmethod
     def _find_dedup_path(directory: Path, slug: str) -> Path:

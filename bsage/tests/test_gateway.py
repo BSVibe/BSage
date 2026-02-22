@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from bsage.core.config import Settings
 from bsage.core.runtime_config import RuntimeConfig
 from bsage.core.skill_loader import SkillMeta
+from bsage.garden.sync import SyncManager
 from bsage.gateway.app import create_app
 from bsage.gateway.dependencies import AppState
 from bsage.gateway.routes import create_routes
@@ -49,6 +50,7 @@ def mock_state():
         llm_api_base=None,
         safe_mode=True,
     )
+    state.sync_manager = SyncManager()
     return state
 
 
@@ -237,6 +239,26 @@ class TestConfigEndpoints:
         assert response.status_code == 200
         # Model should not change
         assert response.json()["llm_model"] == "anthropic/claude-sonnet-4-20250514"
+
+
+class TestSyncBackendsEndpoint:
+    """Test GET /api/sync-backends."""
+
+    def test_list_sync_backends_empty(self, client) -> None:
+        response = client.get("/api/sync-backends")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_list_sync_backends_with_registered(self, client, mock_state) -> None:
+        from unittest.mock import PropertyMock
+
+        backend = AsyncMock()
+        type(backend).name = PropertyMock(return_value="s3")
+        mock_state.sync_manager.register(backend)
+
+        response = client.get("/api/sync-backends")
+        assert response.status_code == 200
+        assert "s3" in response.json()
 
 
 class TestCreateApp:
