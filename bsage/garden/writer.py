@@ -99,18 +99,20 @@ class GardenWriter:
         logger.info("seed_written", source=source, path=str(file_path))
         return file_path
 
-    async def write_garden(self, note: GardenNote) -> Path:
+    async def write_garden(self, note: GardenNote | dict) -> Path:
         """Write a processed garden note with deduplication.
 
         Creates a file at garden/{note_type}/{slug}.md. If a file with the
         same slug already exists, appends _001, _002, etc.
 
         Args:
-            note: The GardenNote to write.
+            note: The GardenNote or dict with note fields to write.
 
         Returns:
             Path to the created garden note file.
         """
+        if isinstance(note, dict):
+            note = GardenNote(**note)
         now = datetime.now(tz=UTC)
         date_str = now.strftime("%Y-%m-%d")
         slug = _slugify(note.title)

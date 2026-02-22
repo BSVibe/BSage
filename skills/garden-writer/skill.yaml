@@ -1,0 +1,9 @@
+name: garden-writer
+version: 1.0.0
+author: bslab
+category: process
+is_dangerous: false
+description: Formats input data into structured Obsidian markdown notes
+entrypoint: skill.py::execute
+rules:
+  - insight-linker
