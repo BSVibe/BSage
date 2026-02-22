@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import structlog
 
-from bsage.connectors.manager import ConnectorManager
 from bsage.core.agent_loop import AgentLoop
 from bsage.core.config import Settings
+from bsage.core.credential_store import CredentialStore
 from bsage.core.llm import LiteLLMClient
 from bsage.core.runtime_config import RuntimeConfig
 from bsage.core.safe_mode import SafeModeGuard
@@ -38,8 +38,8 @@ class AppState:
         self.vault = Vault(settings.vault_path)
         self.garden_writer = GardenWriter(self.vault, sync_manager=self.sync_manager)
 
-        # Connectors
-        self.connector_manager = ConnectorManager()
+        # Credentials
+        self.credential_store = CredentialStore(settings.credentials_dir)
 
         # LLM (reads from RuntimeConfig per-call)
         self.llm_client = LiteLLMClient(runtime_config=self.runtime_config)
@@ -69,7 +69,7 @@ class AppState:
             safe_mode_guard=self.safe_mode_guard,
             garden_writer=self.garden_writer,
             llm_client=self.llm_client,
-            connector_manager=self.connector_manager,
+            credential_store=self.credential_store,
         )
 
         self.scheduler = Scheduler(

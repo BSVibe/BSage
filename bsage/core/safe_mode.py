@@ -22,7 +22,6 @@ class ApprovalRequest:
     skill_name: str
     description: str
     action_summary: str
-    connector_name: str | None = None
 
 
 @runtime_checkable

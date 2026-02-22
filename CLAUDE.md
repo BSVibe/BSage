@@ -33,9 +33,8 @@ See `.claude/rules/` for detailed rules:
 
 ```
 bsage/           # Main Python package
-├── core/        # Config, SkillLoader, SkillRunner, AgentLoop, Scheduler, SafeMode
-├── connectors/  # BaseConnector ABC, ConnectorManager
-├── garden/      # GardenWriter, Vault
+├── core/        # Config, SkillLoader, SkillRunner, AgentLoop, Scheduler, SafeMode, CredentialStore
+├── garden/      # GardenWriter, Vault, SyncManager
 ├── gateway/     # FastAPI Gateway (HTTP + WebSocket)
 ├── interface/   # ApprovalInterface implementations
 └── tests/       # Unit tests (80%+ coverage required)

@@ -32,7 +32,6 @@ class TestSkillMeta:
             description="A test skill",
         )
         assert meta.author == ""
-        assert meta.requires_connector is None
         assert meta.entrypoint is None
         assert meta.trigger is None
         assert meta.rules == []
@@ -45,12 +44,10 @@ class TestSkillMeta:
             is_dangerous=True,
             description="Calendar sync",
             author="bslab",
-            requires_connector="google-calendar",
             entrypoint="skill.py::execute",
             trigger={"type": "cron", "schedule": "*/15 * * * *"},
             rules=["garden-writer"],
         )
-        assert meta.requires_connector == "google-calendar"
         assert meta.entrypoint == "skill.py::execute"
         assert meta.trigger == {"type": "cron", "schedule": "*/15 * * * *"}
         assert meta.rules == ["garden-writer"]
@@ -84,7 +81,6 @@ class TestSkillLoader:
             "category: input\n"
             "is_dangerous: false\n"
             "description: Collect calendar events\n"
-            "requires_connector: google-calendar\n"
             "entrypoint: skill.py::execute\n"
             "trigger:\n"
             "  type: cron\n"
@@ -113,7 +109,6 @@ class TestSkillLoader:
         loader = SkillLoader(skills_dir)
         registry = await loader.load_all()
         meta = registry["calendar-input"]
-        assert meta.requires_connector == "google-calendar"
         assert meta.entrypoint == "skill.py::execute"
         assert meta.trigger["type"] == "cron"
 

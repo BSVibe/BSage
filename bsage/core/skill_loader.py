@@ -24,7 +24,6 @@ class SkillMeta:
     is_dangerous: bool
     description: str
     author: str = ""
-    requires_connector: str | None = None
     entrypoint: str | None = None
     trigger: dict | None = None
     rules: list[str] = field(default_factory=list)

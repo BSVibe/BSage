@@ -35,24 +35,23 @@ LLM_PROVIDER=claude
 ANTHROPIC_API_KEY=sk-ant-real-key-here
 ```
 
-### 2. Connector Credentials
+### 2. Service Credentials
 
-**NEVER log or expose Connector authentication tokens.**
+**NEVER log or expose authentication tokens.**
 
 ```python
 # Correct
-logger.info("connector_authenticated", connector=name, status="success")
+logger.info("credential_loaded", service=name)
 
 # Wrong
 logger.info(f"Authenticated with token: {token}")  # NO!
 ```
 
-**Connector credentials stored in `.credentials/` directory (gitignored):**
+**Service credentials stored in `.credentials/` directory (gitignored) via CredentialStore:**
 
 ```python
-# Correct - credentials directory
-credentials_dir = Path(".credentials")
-# Ensure .gitignore includes .credentials/
+# Correct - CredentialStore manages .credentials/{name}.json
+creds = await context.credentials.get("google-calendar")
 
 # Wrong - store tokens in plain text
 with open("tokens.txt", "w") as f:
@@ -71,16 +70,11 @@ logger.info("llm_call", provider=settings.llm_provider, model="claude-sonnet-4-2
 logger.info(f"Using API key: {settings.anthropic_api_key}")  # NO!
 ```
 
-### 4. Safe Mode — 이중 안전장치
+### 4. Safe Mode
 
-**BSage의 안전 모델은 두 단계로 구성된다.**
+**BSage의 안전 모델:**
 
-**1차: Connector 연결 차단**
-```python
-# Connector가 미연결이면 해당 서비스 접근 자체 불가
-if name not in self._connectors:
-    raise ConnectorNotFoundError(f"Connector '{name}' is not connected")
-```
+**1차: Skill 설치 여부** — 사용자가 설치하지 않은 Skill은 실행 자체 불가.
 
 **2차: SafeModeGuard**
 ```python
@@ -144,7 +138,7 @@ pass  # tmp files remain
 **Principle of least privilege:**
 
 - Safe mode ON by default (`SAFE_MODE=true`)
-- Connector 미연결 시 접근 차단
+- 사용자가 설치한 Skill만 실행 가능
 - API keys scoped to minimum permissions
 - No `shell=True` in subprocess calls
 - Skill은 `context` 객체를 통해서만 외부 접근
@@ -155,13 +149,13 @@ pass  # tmp files remain
 
 ```python
 # Correct (user-facing)
-raise ConnectorAuthError("Authentication failed. Check credentials in .credentials/")
+raise CredentialNotFoundError("No credentials for 'google-calendar'")
 
 # Correct (logs)
-logger.error("connector_auth_failed", connector=name, exc_info=True)
+logger.error("credential_load_failed", service=name, exc_info=True)
 
 # Wrong
-raise ConnectorAuthError(f"Auth failed with token {token}")  # Exposes secrets!
+raise Exception(f"Auth failed with token {token}")  # Exposes secrets!
 ```
 
 ## Verification Checklist

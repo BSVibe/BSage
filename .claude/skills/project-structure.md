@@ -21,33 +21,37 @@ BSage/
 │   │   ├── config.py             # pydantic-settings Settings
 │   │   ├── logging.py            # structlog configuration
 │   │   ├── exceptions.py         # Domain exception classes
+│   │   ├── credential_store.py   # JSON 기반 credential 관리
 │   │   ├── skill_loader.py       # skills/ 스캔 → yaml 파싱 → 레지스트리
 │   │   ├── skill_runner.py       # context 주입 → execute() 호출
 │   │   ├── skill_context.py      # Skill에 주입되는 context 객체
 │   │   ├── agent_loop.py         # InputSkill → ProcessSkill 체인 결정
 │   │   ├── scheduler.py          # APScheduler 기반 trigger 관리
 │   │   └── safe_mode.py          # SafeModeGuard (is_dangerous 체크)
-│   ├── connectors/
-│   │   ├── __init__.py
-│   │   ├── base.py               # BaseConnector ABC
-│   │   └── manager.py            # ConnectorManager (인증·연결 관리)
 │   ├── garden/
 │   │   ├── __init__.py
 │   │   ├── writer.py             # GardenWriter (seeds/garden/actions 쓰기)
-│   │   └── vault.py              # Vault 경로 관리, 읽기
+│   │   ├── vault.py              # Vault 경로 관리, 읽기
+│   │   └── sync.py               # SyncManager (OutputSkill 동기화)
+│   ├── gateway/
+│   │   ├── __init__.py
+│   │   ├── app.py                # FastAPI factory
+│   │   ├── dependencies.py       # AppState 초기화
+│   │   ├── routes.py             # HTTP REST API
+│   │   └── ws.py                 # WebSocket 관리
 │   ├── interface/
 │   │   ├── __init__.py
 │   │   └── cli_interface.py      # CLI 기반 SafeMode 승인 등
 │   └── tests/
 │       ├── __init__.py
 │       ├── test_config.py
+│       ├── test_credential_store.py
 │       ├── test_skill_loader.py
 │       ├── test_skill_runner.py
 │       ├── test_skill_context.py
 │       ├── test_agent_loop.py
 │       ├── test_scheduler.py
 │       ├── test_safe_mode.py
-│       ├── test_connector_manager.py
 │       ├── test_garden_writer.py
 │       └── test_vault.py
 ├── skills/                       # 설치된 Skill 디렉토리
@@ -95,7 +99,6 @@ class SkillMeta:
     is_dangerous: bool
     description: str
     author: str = ""
-    requires_connector: str | None = None
     entrypoint: str | None = None
     trigger: dict | None = None
     rules: list[str] = field(default_factory=list)
@@ -106,23 +109,12 @@ class SkillMeta:
 ```python
 @dataclass
 class SkillContext:
-    connector: ConnectorAccessor     # context.connector("name")
+    credentials: CredentialStore     # context.credentials.get("name")
     garden: GardenWriter             # context.garden.write_seed(...)
     llm: LLMClient                   # context.llm.chat(...)
     config: dict                     # Skill-specific config
     logger: BoundLogger              # structlog logger
     input_data: dict | None = None   # InputSkill 결과 (ProcessSkill용)
-```
-
-### `connectors/base.py`
-
-```python
-@dataclass
-class ConnectorAuth:
-    connector_name: str
-    auth_type: str                   # oauth2 / api_key / token
-    credentials_path: Path
-    is_authenticated: bool = False
 ```
 
 ### `garden/writer.py`
@@ -146,7 +138,6 @@ class ApprovalRequest:
     skill_name: str
     description: str
     action_summary: str
-    connector_name: str | None = None
 ```
 
 ## Naming Conventions
@@ -191,12 +182,13 @@ from bsage.core.exceptions import SkillLoadError
    - `settings.vault_path` for Vault
    - `settings.skills_dir` for Skills
    - `settings.tmp_dir` for temporary files
+   - `settings.credentials_dir` for credentials
 
 2. **Never share code between modules via direct import of implementation** (only via dataclasses/return values)
 
 3. **Skill definitions ONLY in `skill.yaml`** — no hardcoded configuration
 
-4. **Credentials location**: `.credentials/` directory (gitignored)
+4. **Credentials location**: `.credentials/` directory (gitignored), managed by `CredentialStore`
 
 5. **Each module is independently testable** via mocks
 

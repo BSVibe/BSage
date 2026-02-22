@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from bsage.core.exceptions import ConnectorNotFoundError, SkillRunError
+from bsage.core.exceptions import SkillRunError
 from bsage.core.skill_loader import SkillMeta
 from bsage.core.skill_runner import SkillRunner
 
@@ -25,7 +25,7 @@ def _make_meta(**overrides) -> SkillMeta:
 def mock_context():
     ctx = MagicMock()
     ctx.logger = MagicMock()
-    ctx.connector = MagicMock(return_value=AsyncMock())
+    ctx.credentials = MagicMock()
     ctx.garden = AsyncMock()
     ctx.llm = AsyncMock()
     ctx.llm.chat = AsyncMock(return_value="LLM response text")
@@ -91,32 +91,6 @@ class TestSkillRunnerLLM:
         assert "Generate weekly digest" in call_kwargs.kwargs.get(
             "system", call_kwargs.args[0] if call_kwargs.args else ""
         )
-
-
-class TestSkillRunnerConnectorCheck:
-    """Test connector requirement validation."""
-
-    async def test_requires_connector_available(self, tmp_path, mock_context) -> None:
-        meta = _make_meta(
-            name="cal-skill",
-            requires_connector="google-calendar",
-            entrypoint=None,
-        )
-        mock_context.connector = AsyncMock(return_value=MagicMock())
-        runner = SkillRunner(skills_dir=tmp_path)
-        result = await runner.run(meta, mock_context)
-        assert "llm_response" in result
-
-    async def test_requires_connector_missing_raises(self, tmp_path, mock_context) -> None:
-        meta = _make_meta(
-            name="cal-skill",
-            requires_connector="google-calendar",
-            entrypoint=None,
-        )
-        mock_context.connector = AsyncMock(side_effect=ConnectorNotFoundError("not connected"))
-        runner = SkillRunner(skills_dir=tmp_path)
-        with pytest.raises(SkillRunError, match="requires connector"):
-            await runner.run(meta, mock_context)
 
 
 class TestSkillRunnerEdgeCases:

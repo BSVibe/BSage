@@ -28,22 +28,11 @@ class SkillRunner:
 
         For skills with an entrypoint, loads and runs the Python module.
         For yaml-only skills, delegates to LLM-based execution.
-        Validates connector requirements before execution.
 
         Raises:
-            SkillRunError: On execution failure or missing connector.
+            SkillRunError: On execution failure.
         """
         logger.info("skill_run_start", name=skill_meta.name, category=skill_meta.category)
-
-        # Check connector requirement
-        if skill_meta.requires_connector:
-            try:
-                await context.connector(skill_meta.requires_connector)
-            except Exception as exc:
-                raise SkillRunError(
-                    f"Skill '{skill_meta.name}' requires connector "
-                    f"'{skill_meta.requires_connector}' which is not available"
-                ) from exc
 
         try:
             if skill_meta.entrypoint:

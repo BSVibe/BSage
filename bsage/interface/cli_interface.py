@@ -24,8 +24,6 @@ class CLIApprovalInterface:
             f"  Description: {request.description}\n"
             f"  Action:      {request.action_summary}\n"
         )
-        if request.connector_name:
-            message += f"  Connector:   {request.connector_name}\n"
 
         click.echo(message)
 

@@ -47,7 +47,6 @@ class SkillMeta:
     is_dangerous: bool
     description: str
     author: str = ""
-    requires_connector: str | None = None
     entrypoint: str | None = None
     trigger: dict | None = None
     rules: list[str] = field(default_factory=list)
@@ -215,6 +214,25 @@ class GardenWriter:
         )
 ```
 
+## CredentialStore 패턴
+
+```python
+class CredentialStore:
+    """JSON 파일 기반 credential 저장/로드."""
+
+    def __init__(self, credentials_dir: Path) -> None:
+        self._dir = credentials_dir
+
+    async def get(self, name: str) -> dict[str, Any]:
+        """name.json에서 credential 로드. 없으면 CredentialNotFoundError."""
+
+    async def store(self, name: str, data: dict[str, Any]) -> None:
+        """name.json으로 credential 저장."""
+
+    def list_services(self) -> list[str]:
+        """저장된 credential 목록 반환."""
+```
+
 ## Scheduler 패턴
 
 ```python
@@ -249,33 +267,10 @@ class Scheduler:
         self._scheduler.start()
 ```
 
-## ConnectorManager 패턴
-
-```python
-class ConnectorManager:
-    def __init__(self, credentials_dir: Path) -> None:
-        self._credentials_dir = credentials_dir
-        self._connectors: dict[str, BaseConnector] = {}
-
-    async def get(self, name: str) -> BaseConnector:
-        """연결된 Connector 반환. 미연결 시 예외."""
-        if name not in self._connectors:
-            raise ConnectorNotFoundError(f"Connector '{name}' is not connected. Connect it first.")
-        return self._connectors[name]
-
-    async def connect(self, name: str, config: dict) -> None:
-        """Connector 연결 및 인증."""
-        connector_cls = self._resolve(name)
-        connector = connector_cls(config)
-        await connector.authenticate()
-        self._connectors[name] = connector
-        logger.info("connector_connected", name=name)
-```
-
 ## Critical Rules
 
 1. **Skill은 Core 내부 구조를 몰라도 된다** — `context` 객체만 사용
 2. **규칙 기반 실행이 LLM 판단보다 우선** — 예측 가능성 + 비용 절감
 3. **is_dangerous 체크는 건너뛸 수 없다** — SafeModeGuard 우회 금지
 4. **Vault 밖으로 데이터 유출 없음** — GardenWriter만 Vault에 쓰기
-5. **Connector 미연결 시 접근 차단** — 코드 레벨에서 차단
+5. **외부 서비스 연결은 Skill이 자체 처리** — credential은 context.credentials로 로드

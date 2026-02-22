@@ -20,19 +20,18 @@ Personal AI agent that records everything about you in a 2nd Brain (Obsidian Vau
 ┌─────────────────────▼───────────────────────────┐
 │                CORE ENGINE                       │
 │  Scheduler → AgentLoop → SafeModeGuard          │
-│  SkillLoader / SkillRunner                       │
-│  ConnectorManager                                │
+│  SkillLoader / SkillRunner / CredentialStore     │
 │  GardenWriter                                    │
-└──────┬──────────────────────────┬───────────────┘
-       │                          │
-┌──────▼──────┐          ┌────────▼────────┐
-│   SKILLS    │          │   CONNECTORS    │
-│ input       │          │ google-calendar │
-│ process     │          │ telegram        │
-│ output      │          │ github          │
-│ meta        │          │ (community)     │
-└──────┬──────┘          └─────────────────┘
-       │
+└──────────────────────┬──────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────┐
+│                  SKILLS                          │
+│  input (data collection + API connections)       │
+│  process (analysis, formatting, actions)         │
+│  output (vault sync backends)                    │
+│  meta (skill creation, debugging)                │
+└──────────────────────┬──────────────────────────┘
+                       │
 ┌──────▼──────────────────────────────────────────┐
 │           2ND BRAIN  (Obsidian Vault)            │
 │   /seeds  /garden  /actions  /skills            │
@@ -43,7 +42,7 @@ Personal AI agent that records everything about you in a 2nd Brain (Obsidian Vau
 
 - **2nd Brain-bound**: All data stays in your Obsidian Vault. Nothing leaves without explicit OutputSkill.
 - **Transparent**: Agent's knowledge = Obsidian notes. Agent's actions = logged in `/actions/`.
-- **Safe**: Dual safety — Connector connection required + SafeMode approval for dangerous Skills.
+- **Safe**: SafeMode approval for dangerous Skills. User controls which Skills to install.
 - **Extensible**: Everything is a Skill (Input/Process/Output/Meta). YAML + optional Python.
 
 ## Quick Start

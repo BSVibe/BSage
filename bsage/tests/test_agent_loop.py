@@ -48,7 +48,7 @@ def mock_deps():
     garden_writer.write_action = AsyncMock()
     llm_client = MagicMock()
     llm_client.chat = AsyncMock(return_value="garden-writer")
-    connector_manager = MagicMock()
+    credential_store = MagicMock()
 
     return {
         "registry": registry,
@@ -56,7 +56,7 @@ def mock_deps():
         "safe_mode_guard": safe_mode_guard,
         "garden_writer": garden_writer,
         "llm_client": llm_client,
-        "connector_manager": connector_manager,
+        "credential_store": credential_store,
     }
 
 
@@ -67,7 +67,7 @@ def _make_loop(deps: dict) -> AgentLoop:
         safe_mode_guard=deps["safe_mode_guard"],
         garden_writer=deps["garden_writer"],
         llm_client=deps["llm_client"],
-        connector_manager=deps["connector_manager"],
+        credential_store=deps["credential_store"],
     )
 
 

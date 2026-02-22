@@ -37,20 +37,10 @@ class TestApprovalRequest:
             skill_name="email-sender",
             description="Send emails via SMTP",
             action_summary="Send 3 emails to contacts",
-            connector_name="smtp-connector",
         )
         assert request.skill_name == "email-sender"
         assert request.description == "Send emails via SMTP"
         assert request.action_summary == "Send 3 emails to contacts"
-        assert request.connector_name == "smtp-connector"
-
-    def test_approval_request_connector_name_defaults_to_none(self) -> None:
-        request = ApprovalRequest(
-            skill_name="garden-writer",
-            description="Write garden notes",
-            action_summary="Write 5 notes",
-        )
-        assert request.connector_name is None
 
 
 class TestSafeModeGuard:

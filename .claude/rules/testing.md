@@ -41,7 +41,7 @@ async def test_load_skill_parses_yaml(tmp_path):
 
 **ALWAYS mock**:
 - Claude API (Anthropic) — `unittest.mock.patch("anthropic.Anthropic")`
-- Connector APIs — `unittest.mock.AsyncMock` for Connector
+- External APIs — `unittest.mock.AsyncMock`
 - APScheduler — `unittest.mock.MagicMock`
 - File system (Vault) — `tmp_path` fixture
 
@@ -59,16 +59,10 @@ def mock_llm():
         yield mock
 
 @pytest.fixture
-def mock_connector():
-    connector = AsyncMock()
-    connector.fetch_events = AsyncMock(return_value=[{"summary": "Test"}])
-    return connector
-
-@pytest.fixture
-def mock_context(mock_connector, tmp_path):
+def mock_context(tmp_path):
     context = MagicMock()
     context.logger = MagicMock()
-    context.connector = MagicMock(return_value=mock_connector)
+    context.credentials = MagicMock()
     context.garden = AsyncMock()
     context.garden.write_seed = AsyncMock()
     context.garden.write_garden = AsyncMock()
@@ -91,7 +85,7 @@ bsage/
 │   ├── test_agent_loop.py
 │   ├── test_scheduler.py
 │   ├── test_safe_mode.py
-│   ├── test_connector_manager.py
+│   ├── test_credential_store.py
 │   ├── test_garden_writer.py
 │   └── test_vault.py
 

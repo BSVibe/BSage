@@ -1,35 +1,8 @@
-"""Tests for bsage.core.skill_context — SkillContext and ConnectorAccessor."""
+"""Tests for bsage.core.skill_context — SkillContext."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
-from bsage.core.skill_context import ConnectorAccessor, SkillContext
-
-
-class TestConnectorAccessor:
-    """Test ConnectorAccessor callable wrapper."""
-
-    async def test_accessor_calls_manager_get(self) -> None:
-        mock_manager = MagicMock()
-        mock_connector = MagicMock()
-        mock_manager.get = AsyncMock(return_value=mock_connector)
-
-        accessor = ConnectorAccessor(mock_manager)
-        result = await accessor("google-calendar")
-
-        mock_manager.get.assert_called_once_with("google-calendar")
-        assert result is mock_connector
-
-    async def test_accessor_propagates_error(self) -> None:
-        import pytest
-
-        from bsage.core.exceptions import ConnectorNotFoundError
-
-        mock_manager = MagicMock()
-        mock_manager.get = AsyncMock(side_effect=ConnectorNotFoundError("not found"))
-
-        accessor = ConnectorAccessor(mock_manager)
-        with pytest.raises(ConnectorNotFoundError):
-            await accessor("missing")
+from bsage.core.skill_context import SkillContext
 
 
 class TestSkillContext:
@@ -37,7 +10,7 @@ class TestSkillContext:
 
     def test_context_creation(self) -> None:
         context = SkillContext(
-            connector=MagicMock(),
+            credentials=MagicMock(),
             garden=MagicMock(),
             llm=MagicMock(),
             config={"key": "value"},
@@ -48,7 +21,7 @@ class TestSkillContext:
 
     def test_context_with_input_data(self) -> None:
         context = SkillContext(
-            connector=MagicMock(),
+            credentials=MagicMock(),
             garden=MagicMock(),
             llm=MagicMock(),
             config={},

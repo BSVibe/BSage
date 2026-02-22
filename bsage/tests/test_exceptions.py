@@ -2,8 +2,7 @@
 
 from bsage.core.exceptions import (
     BSageError,
-    ConnectorAuthError,
-    ConnectorNotFoundError,
+    CredentialNotFoundError,
     SafeModeError,
     SkillLoadError,
     SkillRejectedError,
@@ -34,16 +33,9 @@ class TestExceptionHierarchy:
         assert isinstance(err, BSageError)
         assert "garden-writer" in str(err)
 
-    def test_connector_not_found_error(self) -> None:
-        err = ConnectorNotFoundError("google-calendar")
+    def test_credential_not_found_error(self) -> None:
+        err = CredentialNotFoundError("google-calendar")
         assert isinstance(err, BSageError)
-
-    def test_connector_auth_error(self) -> None:
-        err = ConnectorAuthError("Authentication failed. Check credentials in .credentials/")
-        assert isinstance(err, BSageError)
-        # Must not expose secrets in message
-        assert "token" not in str(err).lower()
-        assert "key" not in str(err).lower()
 
     def test_vault_path_error(self) -> None:
         err = VaultPathError("path traversal detected")
@@ -59,8 +51,7 @@ class TestExceptionHierarchy:
             SkillLoadError("test"),
             SkillRunError("test"),
             SkillRejectedError("test"),
-            ConnectorNotFoundError("test"),
-            ConnectorAuthError("test"),
+            CredentialNotFoundError("test"),
             VaultPathError("test"),
             SafeModeError("test"),
         ]

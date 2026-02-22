@@ -17,12 +17,8 @@ class SkillRejectedError(BSageError):
     """Raised when SafeModeGuard rejects a dangerous skill."""
 
 
-class ConnectorNotFoundError(BSageError):
-    """Raised when accessing a connector that is not connected."""
-
-
-class ConnectorAuthError(BSageError):
-    """Raised when connector authentication fails."""
+class CredentialNotFoundError(BSageError):
+    """Raised when credentials for a service are not found."""
 
 
 class VaultPathError(BSageError):

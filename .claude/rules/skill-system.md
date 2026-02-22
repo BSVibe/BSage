@@ -26,7 +26,6 @@ version: 1.0.0
 author: bslab
 category: process              # input / process / output / meta
 is_dangerous: false            # true면 SafeModeGuard 승인 필수
-requires_connector: null       # Connector 이름 또는 null
 description: 수집 데이터를 Obsidian 마크다운으로 정리
 
 # InputSkill 전용
@@ -50,10 +49,12 @@ entrypoint: skill.py::execute  # py 필요 시에만 명시
 **순수 Python. `bsage` 패키지 import 금지.**
 
 ```python
-# Correct
+# Correct — Skill이 자체적으로 API 연결 처리
 async def execute(context):
-    events = await context.connector("google-calendar").fetch_events()
-    await context.garden.write_seed("calendar", events)
+    creds = await context.credentials.get("google-calendar")
+    # Skill 내부에서 직접 API 호출
+    events = await fetch_calendar_events(creds)
+    await context.garden.write_seed("calendar", {"events": events})
     return {"collected": len(events)}
 
 # Wrong — bsage import 사용
@@ -65,6 +66,7 @@ from bsage.core.config import settings  # NO!
 - `context` 객체를 통해서만 외부 접근
 - 표준 라이브러리 + PyPI 패키지만 사용
 - `bsage` 내부 모듈 직접 import 금지
+- 외부 서비스 연결은 Skill이 자체적으로 처리 (credential은 context.credentials로 로드)
 
 ### 4. SkillContext 인터페이스
 
@@ -72,14 +74,14 @@ Skill은 `context` 객체를 통해서만 Core Engine과 소통한다.
 
 ```python
 # context가 제공하는 인터페이스
-context.connector(name: str)       # Connector 접근
-context.garden.write_seed(...)     # seeds/ 쓰기
-context.garden.write_garden(...)   # garden/ 쓰기
-context.garden.write_action(...)   # actions/ 로그
-context.garden.read_notes(...)     # 기존 노트 읽기
-context.llm.chat(...)              # LLM API 호출
-context.config                     # Skill 설정값 접근
-context.logger                     # structlog 로거
+context.credentials.get(name: str)  # 저장된 credential 로드
+context.garden.write_seed(...)      # seeds/ 쓰기
+context.garden.write_garden(...)    # garden/ 쓰기
+context.garden.write_action(...)    # actions/ 로그
+context.garden.read_notes(...)      # 기존 노트 읽기
+context.llm.chat(...)               # LLM API 호출
+context.config                      # Skill 설정값 접근
+context.logger                      # structlog 로거
 ```
 
 ### 5. is_dangerous 규칙
@@ -100,21 +102,21 @@ weekly-digest:      is_dangerous: false  # 리포트 생성
 
 **SafeModeGuard가 `is_dangerous: true` Skill 실행 전 반드시 사용자 승인을 요청한다.**
 
-### 6. Connector 접근 규칙
+### 6. Credential 접근 규칙
 
-**Skill은 Connector에 직접 접근하지 않는다. 반드시 `context.connector()` 경유.**
+**Skill은 `context.credentials.get()` 으로 저장된 credential을 로드한다.**
+**외부 서비스 연결 로직은 Skill 내부에서 자체 처리한다.**
 
 ```python
-# Correct
+# Correct — Skill이 자체적으로 연결 처리
 async def execute(context):
-    cal = context.connector("google-calendar")
-    events = await cal.fetch_events()
+    creds = await context.credentials.get("google-calendar")
+    cal_client = build_calendar_client(creds)
+    events = await cal_client.list_events()
 
-# Wrong — 직접 API 호출
-import googleapiclient  # NO! Connector를 통해서만
+# Wrong — bsage 내부에서 Connector 구현
+from bsage.connectors.google import GoogleCalendarConnector  # NO!
 ```
-
-**`requires_connector` 필드에 명시된 Connector가 미연결 상태면 Skill 실행 자체가 차단된다.**
 
 ### 7. ProcessSkill 체인 결정
 
@@ -154,6 +156,6 @@ Skill 구현 전:
 - [ ] is_dangerous 적절히 설정
 - [ ] skill.py에서 bsage import 없음
 - [ ] execute(context) 진입점 사용
-- [ ] Connector 접근은 context.connector() 경유
+- [ ] credential 접근은 context.credentials.get() 경유
 - [ ] GardenWriter로 적절한 디렉토리에 쓰기
 - [ ] 테스트에서 context mock 사용

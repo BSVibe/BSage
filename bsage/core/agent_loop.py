@@ -7,9 +7,9 @@ from typing import Any
 
 import structlog
 
-from bsage.connectors.manager import ConnectorManager
+from bsage.core.credential_store import CredentialStore
 from bsage.core.safe_mode import SafeModeGuard
-from bsage.core.skill_context import ConnectorAccessor, LLMClient, SkillContext
+from bsage.core.skill_context import LLMClient, SkillContext
 from bsage.core.skill_loader import SkillMeta
 from bsage.core.skill_runner import SkillRunner
 from bsage.garden.writer import GardenWriter
@@ -33,14 +33,14 @@ class AgentLoop:
         safe_mode_guard: SafeModeGuard,
         garden_writer: GardenWriter,
         llm_client: LLMClient,
-        connector_manager: ConnectorManager,
+        credential_store: CredentialStore,
     ) -> None:
         self._registry = registry
         self._skill_runner = skill_runner
         self._safe_mode_guard = safe_mode_guard
         self._garden_writer = garden_writer
         self._llm_client = llm_client
-        self._connector_manager = connector_manager
+        self._credential_store = credential_store
 
     async def on_input(self, skill_name: str, raw_data: dict[str, Any]) -> list[dict[str, Any]]:
         """Process input from an InputSkill and run the chain.
@@ -136,7 +136,7 @@ class AgentLoop:
     def _build_context(self, input_data: dict[str, Any] | None = None) -> SkillContext:
         """Create a SkillContext with all dependencies injected."""
         return SkillContext(
-            connector=ConnectorAccessor(self._connector_manager),
+            credentials=self._credential_store,
             garden=self._garden_writer,
             llm=self._llm_client,
             config={},
