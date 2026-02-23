@@ -51,6 +51,11 @@ def mock_state():
         safe_mode=True,
     )
     state.sync_manager = SyncManager()
+    state.llm_client = AsyncMock()
+    state.llm_client.chat = AsyncMock(return_value="Mocked LLM response")
+    state.garden_writer = AsyncMock()
+    state.garden_writer.read_notes = AsyncMock(return_value=[])
+    state.garden_writer.write_action = AsyncMock()
     return state
 
 
@@ -274,3 +279,35 @@ class TestCreateApp:
         app = create_app(settings)
         assert isinstance(app, FastAPI)
         assert app.title == "BSage Gateway"
+
+
+class TestChatEndpoint:
+    """Test POST /api/chat."""
+
+    def test_chat_returns_response(self, client) -> None:
+        response = client.post("/api/chat", json={"message": "Hello"})
+        assert response.status_code == 200
+        data = response.json()
+        assert "response" in data
+
+    def test_chat_with_history(self, client) -> None:
+        response = client.post(
+            "/api/chat",
+            json={
+                "message": "Follow up",
+                "history": [
+                    {"role": "user", "content": "Hi"},
+                    {"role": "assistant", "content": "Hello!"},
+                ],
+            },
+        )
+        assert response.status_code == 200
+
+    def test_chat_missing_message_returns_422(self, client) -> None:
+        response = client.post("/api/chat", json={})
+        assert response.status_code == 422
+
+    def test_chat_llm_error_returns_500(self, client, mock_state) -> None:
+        mock_state.llm_client.chat = AsyncMock(side_effect=RuntimeError("LLM down"))
+        response = client.post("/api/chat", json={"message": "Hello"})
+        assert response.status_code == 500

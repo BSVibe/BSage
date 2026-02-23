@@ -8,9 +8,18 @@ import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from bsage.gateway.chat import handle_chat
 from bsage.gateway.dependencies import AppState
 
 logger = structlog.get_logger(__name__)
+
+
+class ChatMessage(BaseModel):
+    """Request body for POST /api/chat."""
+
+    message: str
+    history: list[dict[str, Any]] = []
+    context_paths: list[str] | None = None
 
 
 class ConfigUpdate(BaseModel):
@@ -90,6 +99,22 @@ def create_routes(state: AppState) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return state.runtime_config.snapshot()
+
+    @api_router.post("/chat")
+    async def chat(body: ChatMessage) -> dict[str, str]:
+        """Vault-aware conversational chat."""
+        try:
+            response = await handle_chat(
+                message=body.message,
+                history=body.history,
+                llm_client=state.llm_client,
+                garden_writer=state.garden_writer,
+                context_paths=body.context_paths,
+            )
+            return {"response": response}
+        except Exception as exc:
+            logger.exception("chat_failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @api_router.get("/sync-backends")
     async def list_sync_backends() -> list[str]:

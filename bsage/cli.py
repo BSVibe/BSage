@@ -6,6 +6,8 @@ import asyncio
 import importlib.util
 import inspect
 import re
+import threading
+import time
 from pathlib import Path
 
 import click
@@ -31,18 +33,101 @@ def main() -> None:
     """BSage — Personal AI Agent for your 2nd Brain."""
 
 
+_SERVER_READY_POLL_INTERVAL = 0.2
+_SERVER_READY_TIMEOUT = 10
+
+
 @main.command()
-def run() -> None:
-    """Start the BSage Gateway server."""
+@click.option("--no-chat", is_flag=True, help="Start server only, no interactive REPL.")
+def run(no_chat: bool) -> None:
+    """Start the BSage Gateway server and enter interactive chat."""
     settings = get_settings()
+    base_url = f"http://{settings.gateway_host}:{settings.gateway_port}"
+
     click.echo(f"Starting BSage Gateway on {settings.gateway_host}:{settings.gateway_port}")
-    uvicorn.run(
+
+    config = uvicorn.Config(
         "bsage.gateway.app:create_app",
         factory=True,
         host=settings.gateway_host,
         port=settings.gateway_port,
         log_level=settings.log_level,
     )
+    server = uvicorn.Server(config)
+
+    if no_chat:
+        server.run()
+        return
+
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    if not _wait_for_server(base_url):
+        click.echo("Error: Gateway failed to start.", err=True)
+        raise SystemExit(1)
+
+    try:
+        _chat_repl(base_url)
+    except KeyboardInterrupt:
+        click.echo("\nGoodbye!")
+    finally:
+        server.should_exit = True
+        thread.join(timeout=3)
+
+
+def _wait_for_server(base_url: str) -> bool:
+    """Poll health endpoint until the server is ready."""
+    deadline = time.monotonic() + _SERVER_READY_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            resp = httpx.get(f"{base_url}/api/health", timeout=1.0)
+            if resp.status_code == 200:  # noqa: PLR2004
+                return True
+        except httpx.ConnectError:
+            pass
+        time.sleep(_SERVER_READY_POLL_INTERVAL)
+    return False
+
+
+def _chat_repl(base_url: str) -> None:
+    """Interactive chat REPL that talks to the local Gateway."""
+    click.echo("BSage Chat — Type /quit to exit.\n")
+    history: list[dict[str, str]] = []
+
+    while True:
+        try:
+            user_input = click.prompt("You", prompt_suffix="> ")
+        except (EOFError, KeyboardInterrupt):
+            click.echo("\nGoodbye!")
+            return
+
+        if user_input.strip().lower() == "/quit":
+            click.echo("Goodbye!")
+            return
+
+        if not user_input.strip():
+            continue
+
+        try:
+            resp = httpx.post(
+                f"{base_url}/api/chat",
+                json={"message": user_input, "history": history},
+                timeout=60.0,
+            )
+            resp.raise_for_status()
+        except httpx.ConnectError:
+            click.echo("Error: Lost connection to Gateway.", err=True)
+            return
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.json().get("detail", "Unknown error")
+            click.echo(f"Error: {detail}", err=True)
+            continue
+
+        answer = resp.json().get("response", "")
+        click.echo(f"BSage> {answer}\n")
+
+        history.append({"role": "user", "content": user_input})
+        history.append({"role": "assistant", "content": answer})
 
 
 @main.command()
