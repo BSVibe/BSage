@@ -40,6 +40,9 @@ class SkillMeta:
     credentials: dict | None = None
     notification_entrypoint: str | None = None
 
+    # Tool use — JSON Schema for input_data (enables chat tool integration)
+    input_schema: dict | None = None
+
     # YAML-only skill fields (used when entrypoint is None)
     read_context: list[str] = field(default_factory=list)
     output_target: OutputTarget | None = None

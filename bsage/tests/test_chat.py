@@ -51,11 +51,11 @@ def _make_garden_writer(notes_by_dir: dict[str, list[tuple[str, str]]] | None = 
     return writer
 
 
-def _make_llm_client(response: str = "Hello from BSage!"):
-    """Create a mock LiteLLMClient."""
-    client = AsyncMock()
-    client.chat = AsyncMock(return_value=response)
-    return client
+def _make_agent_loop(response: str = "Hello from BSage!"):
+    """Create a mock AgentLoop."""
+    loop = AsyncMock()
+    loop.chat = AsyncMock(return_value=response)
+    return loop
 
 
 class TestGatherVaultContext:
@@ -157,24 +157,24 @@ class TestHandleChat:
 
     async def test_basic_chat(self, prompt_registry) -> None:
         writer = _make_garden_writer({"garden/idea": [("note.md", "Test idea")]})
-        llm = _make_llm_client("Here is my response.")
+        agent_loop = _make_agent_loop("Here is my response.")
 
         result = await handle_chat(
             message="Hello",
             history=[],
-            llm_client=llm,
+            agent_loop=agent_loop,
             garden_writer=writer,
             prompt_registry=prompt_registry,
         )
 
         assert result == "Here is my response."
-        llm.chat.assert_called_once()
+        agent_loop.chat.assert_called_once()
         writer.write_action.assert_called_once()
         writer.write_seed.assert_called_once()
 
-    async def test_history_passed_to_llm(self, prompt_registry) -> None:
+    async def test_history_passed_to_agent_loop(self, prompt_registry) -> None:
         writer = _make_garden_writer({})
-        llm = _make_llm_client("Response")
+        agent_loop = _make_agent_loop("Response")
 
         history = [
             {"role": "user", "content": "Hi"},
@@ -183,24 +183,24 @@ class TestHandleChat:
         await handle_chat(
             message="Follow up",
             history=history,
-            llm_client=llm,
+            agent_loop=agent_loop,
             garden_writer=writer,
             prompt_registry=prompt_registry,
         )
 
-        messages = llm.chat.call_args.kwargs["messages"]
+        messages = agent_loop.chat.call_args.kwargs["messages"]
         # history + new user message
         assert len(messages) == 3
         assert messages[-1] == {"role": "user", "content": "Follow up"}
 
     async def test_custom_context_paths(self, prompt_registry) -> None:
         writer = _make_garden_writer({"custom/path": [("note.md", "Custom content")]})
-        llm = _make_llm_client("Ok")
+        agent_loop = _make_agent_loop("Ok")
 
         await handle_chat(
             message="Test",
             history=[],
-            llm_client=llm,
+            agent_loop=agent_loop,
             garden_writer=writer,
             prompt_registry=prompt_registry,
             context_paths=["custom/path"],
@@ -210,28 +210,27 @@ class TestHandleChat:
 
     async def test_default_context_paths_used(self, prompt_registry) -> None:
         writer = _make_garden_writer({})
-        llm = _make_llm_client("Ok")
+        agent_loop = _make_agent_loop("Ok")
 
         await handle_chat(
             message="Test",
             history=[],
-            llm_client=llm,
+            agent_loop=agent_loop,
             garden_writer=writer,
             prompt_registry=prompt_registry,
         )
 
-        # Should call read_notes for each default path
         called_dirs = [call.args[0] for call in writer.read_notes.call_args_list]
         assert called_dirs == DEFAULT_CONTEXT_PATHS
 
     async def test_action_logged(self, prompt_registry) -> None:
         writer = _make_garden_writer({})
-        llm = _make_llm_client("My answer")
+        agent_loop = _make_agent_loop("My answer")
 
         await handle_chat(
             message="What should I do?",
             history=[],
-            llm_client=llm,
+            agent_loop=agent_loop,
             garden_writer=writer,
             prompt_registry=prompt_registry,
         )
@@ -243,12 +242,12 @@ class TestHandleChat:
 
     async def test_transcript_saved_as_seed(self, prompt_registry) -> None:
         writer = _make_garden_writer({})
-        llm = _make_llm_client("Full response\nwith newlines")
+        agent_loop = _make_agent_loop("Full response\nwith newlines")
 
         await handle_chat(
             message="Tell me something",
             history=[],
-            llm_client=llm,
+            agent_loop=agent_loop,
             garden_writer=writer,
             prompt_registry=prompt_registry,
         )

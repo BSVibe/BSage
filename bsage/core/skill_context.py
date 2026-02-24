@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -10,12 +11,22 @@ import structlog
 from bsage.core.notification import NotificationInterface
 from bsage.garden.writer import GardenWriter
 
+# Type alias for tool handlers: (tool_call_id, function_name, arguments) -> result JSON
+ToolHandler = Callable[[str, str, dict[str, Any]], Awaitable[str]]
+
 
 @runtime_checkable
 class LLMClient(Protocol):
     """Protocol for LLM chat clients (litellm, mock, etc.)."""
 
-    async def chat(self, system: str, messages: list[dict]) -> str: ...
+    async def chat(
+        self,
+        system: str,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        tool_handler: ToolHandler | None = None,
+        max_rounds: int = 10,
+    ) -> str: ...
 
 
 @dataclass

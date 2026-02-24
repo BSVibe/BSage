@@ -33,6 +33,7 @@ def mock_deps():
             name="garden-writer",
             category="process",
             trigger={"type": "on_input"},
+            input_schema={"type": "object", "properties": {"items": {"type": "array"}}},
         ),
         "insight-linker": _make_meta(
             name="insight-linker",
@@ -92,8 +93,8 @@ class TestAgentLoopOnInput:
     async def test_on_input_triggers_matching_process_skills(self, mock_deps) -> None:
         loop = _make_loop(mock_deps)
         await loop.on_input("calendar-input", {"events": [1]})
-        # garden-writer (on_input, no sources filter) + insight-linker (sources: [calendar-input])
-        # + dangerous-skill (on_input, no sources filter) = 3 triggered
+        # garden-writer (on_input) + insight-linker (sources: [calendar-input])
+        # + dangerous-skill (on_input) = 3 deterministic triggers
         run_calls = mock_deps["skill_runner"].run.call_args_list
         run_names = [call.args[0].name for call in run_calls]
         assert "garden-writer" in run_names
@@ -102,7 +103,6 @@ class TestAgentLoopOnInput:
 
     async def test_on_input_respects_sources_filter(self, mock_deps) -> None:
         loop = _make_loop(mock_deps)
-        # Input from unknown-input — insight-linker should NOT trigger (sources: [calendar-input])
         mock_deps["registry"]["unknown-input"] = _make_meta(name="unknown-input", category="input")
         await loop.on_input("unknown-input", {"data": "test"})
         run_calls = mock_deps["skill_runner"].run.call_args_list
@@ -138,68 +138,194 @@ class TestAgentLoopFindTriggered:
         loop = _make_loop(mock_deps)
         triggered = loop._find_triggered_skills("calendar-input")
         names = [m.name for m in triggered]
-        assert "calendar-input" not in names  # input category
+        assert "calendar-input" not in names
 
     async def test_excludes_cron_and_on_demand_skills(self, mock_deps) -> None:
         loop = _make_loop(mock_deps)
         triggered = loop._find_triggered_skills("calendar-input")
         names = [m.name for m in triggered]
-        assert "skill-builder" not in names  # on_demand
+        assert "skill-builder" not in names
 
     async def test_sources_filter_excludes_unmatched(self, mock_deps) -> None:
         loop = _make_loop(mock_deps)
         triggered = loop._find_triggered_skills("unknown-source")
         names = [m.name for m in triggered]
-        assert "insight-linker" not in names  # sources: [calendar-input]
-        assert "garden-writer" in names  # no sources filter
+        assert "insight-linker" not in names
+        assert "garden-writer" in names
 
 
 class TestAgentLoopOnDemand:
-    """Test LLM-based on_demand skill selection."""
+    """Test LLM-based on_demand skill routing."""
 
-    async def test_llm_selects_on_demand_skill(self, mock_deps) -> None:
+    async def test_text_routing_selects_and_runs_skill(self, mock_deps) -> None:
+        """On-demand skill without input_schema uses text-based routing."""
         mock_deps["llm_client"].chat = AsyncMock(return_value="skill-builder")
         loop = _make_loop(mock_deps)
-        on_demand = await loop._decide_on_demand_skills("calendar-input", {"data": "test"})
-        assert len(on_demand) == 1
-        assert on_demand[0].name == "skill-builder"
+        results = await loop._decide_on_demand_skills("calendar-input", {"data": "test"})
+        assert len(results) == 1
+        assert results[0]["status"] == "ok"
+        # skill-builder should have been run via SkillRunner
+        run_calls = mock_deps["skill_runner"].run.call_args_list
+        run_names = [call.args[0].name for call in run_calls]
+        assert "skill-builder" in run_names
 
-    async def test_llm_returns_none_no_skills(self, mock_deps) -> None:
+    async def test_text_routing_none_returns_empty(self, mock_deps) -> None:
         mock_deps["llm_client"].chat = AsyncMock(return_value="none")
         loop = _make_loop(mock_deps)
-        on_demand = await loop._decide_on_demand_skills("calendar-input", {"data": "test"})
-        assert len(on_demand) == 0
+        results = await loop._decide_on_demand_skills("calendar-input", {"data": "test"})
+        assert len(results) == 0
 
-    async def test_llm_ignores_unknown_skill_names(self, mock_deps) -> None:
+    async def test_text_routing_ignores_unknown_names(self, mock_deps) -> None:
         mock_deps["llm_client"].chat = AsyncMock(return_value="nonexistent-skill")
         loop = _make_loop(mock_deps)
-        on_demand = await loop._decide_on_demand_skills("calendar-input", {"data": "test"})
-        assert len(on_demand) == 0
+        results = await loop._decide_on_demand_skills("calendar-input", {"data": "test"})
+        assert len(results) == 0
 
     async def test_no_on_demand_skills_skips_llm(self, mock_deps) -> None:
-        # Remove the only on_demand skill
         del mock_deps["registry"]["skill-builder"]
         loop = _make_loop(mock_deps)
-        on_demand = await loop._decide_on_demand_skills("calendar-input", {"data": "test"})
-        assert len(on_demand) == 0
+        results = await loop._decide_on_demand_skills("calendar-input", {"data": "test"})
+        assert len(results) == 0
         mock_deps["llm_client"].chat.assert_not_called()
 
     async def test_triggerless_process_treated_as_on_demand(self, mock_deps) -> None:
-        """Process skills with no trigger are treated as on_demand."""
         mock_deps["registry"]["auto-tagger"] = _make_meta(
             name="auto-tagger",
             category="process",
-            trigger=None,  # no trigger = on_demand
+            trigger=None,
         )
         mock_deps["llm_client"].chat = AsyncMock(return_value="auto-tagger")
         loop = _make_loop(mock_deps)
-        on_demand = await loop._decide_on_demand_skills("calendar-input", {"data": "test"})
-        names = [m.name for m in on_demand]
-        assert "auto-tagger" in names
+        results = await loop._decide_on_demand_skills("calendar-input", {"data": "test"})
+        assert len(results) >= 1
+
+    async def test_tool_use_path_when_input_schema_exists(self, mock_deps) -> None:
+        """On-demand skill with input_schema uses tool use routing."""
+        mock_deps["registry"]["schema-skill"] = _make_meta(
+            name="schema-skill",
+            category="process",
+            trigger={"type": "on_demand"},
+            input_schema={"type": "object", "properties": {"x": {"type": "string"}}},
+        )
+        mock_deps["llm_client"].chat = AsyncMock(return_value="Done")
+        loop = _make_loop(mock_deps)
+        await loop._decide_on_demand_skills("test-input", {"data": "test"})
+        call_kwargs = mock_deps["llm_client"].chat.call_args.kwargs
+        assert call_kwargs["tools"] is not None
+
+
+class TestAgentLoopChat:
+    """Test interactive chat with tool use."""
+
+    async def test_chat_uses_tools_when_available(self, mock_deps) -> None:
+        mock_deps["llm_client"].chat = AsyncMock(return_value="Chat response")
+        loop = _make_loop(mock_deps)
+        result = await loop.chat(
+            system="You are BSage",
+            messages=[{"role": "user", "content": "Save a note"}],
+        )
+        assert result == "Chat response"
+        call_kwargs = mock_deps["llm_client"].chat.call_args.kwargs
+        assert call_kwargs["tools"] is not None
+
+    async def test_chat_falls_back_to_plain_when_no_tools(self, mock_deps) -> None:
+        # Remove all input_schema from registry
+        for meta in mock_deps["registry"].values():
+            meta.input_schema = None
+        mock_deps["llm_client"].chat = AsyncMock(return_value="Plain response")
+        loop = _make_loop(mock_deps)
+        result = await loop.chat(
+            system="You are BSage",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+        assert result == "Plain response"
+        call_kwargs = mock_deps["llm_client"].chat.call_args.kwargs
+        assert call_kwargs["tools"] is None
+        assert call_kwargs["tool_handler"] is None
+
+    async def test_chat_passes_system_and_messages(self, mock_deps) -> None:
+        mock_deps["llm_client"].chat = AsyncMock(return_value="ok")
+        loop = _make_loop(mock_deps)
+        msgs = [{"role": "user", "content": "hi"}]
+        await loop.chat(system="sys prompt", messages=msgs)
+        call_kwargs = mock_deps["llm_client"].chat.call_args.kwargs
+        assert call_kwargs["system"] == "sys prompt"
+        assert call_kwargs["messages"] == msgs
+
+
+class TestBuildSkillTools:
+    """Test _build_skill_tools tool definition generation."""
+
+    async def test_includes_skills_with_input_schema(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        tools = loop._build_skill_tools()
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "garden-writer" in tool_names
+
+    async def test_excludes_skills_without_input_schema(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        tools = loop._build_skill_tools()
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "insight-linker" not in tool_names
+        assert "skill-builder" not in tool_names
+
+    async def test_excludes_non_process_skills(self, mock_deps) -> None:
+        mock_deps["registry"]["input-with-schema"] = _make_meta(
+            name="input-with-schema",
+            category="input",
+            input_schema={"type": "object"},
+        )
+        loop = _make_loop(mock_deps)
+        tools = loop._build_skill_tools()
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "input-with-schema" not in tool_names
+
+    async def test_tool_format_is_openai_compatible(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        tools = loop._build_skill_tools()
+        for tool in tools:
+            assert tool["type"] == "function"
+            assert "name" in tool["function"]
+            assert "description" in tool["function"]
+            assert "parameters" in tool["function"]
+
+
+class TestHandleToolCall:
+    """Test _handle_tool_call skill execution."""
+
+    async def test_runs_skill_via_runner(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call("tc1", "garden-writer", {"items": []})
+        mock_deps["skill_runner"].run.assert_called_once()
+        assert "ok" in result
+
+    async def test_unknown_skill_returns_error(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call("tc1", "nonexistent", {})
+        assert "error" in result
+        assert "Unknown skill" in result
+
+    async def test_safe_mode_rejection(self, mock_deps) -> None:
+        mock_deps["safe_mode_guard"].check = AsyncMock(return_value=False)
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call("tc1", "garden-writer", {})
+        assert "rejected" in result
+        mock_deps["skill_runner"].run.assert_not_called()
+
+    async def test_writes_action_on_success(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        await loop._handle_tool_call("tc1", "garden-writer", {"items": []})
+        mock_deps["garden_writer"].write_action.assert_called_once()
+
+    async def test_passes_args_as_input_data(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        await loop._handle_tool_call("tc1", "garden-writer", {"items": [{"title": "Test"}]})
+        context = mock_deps["skill_runner"].run.call_args.args[1]
+        assert context.input_data == {"items": [{"title": "Test"}]}
 
 
 class TestAgentLoopBuildContext:
-    """Test _build_context creates proper SkillContext."""
+    """Test build_context creates proper SkillContext."""
 
     async def test_build_context_has_required_fields(self, mock_deps) -> None:
         loop = _make_loop(mock_deps)

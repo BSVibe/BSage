@@ -36,6 +36,7 @@ class TestSkillMeta:
         assert meta.trigger is None
         assert meta.credentials is None
         assert meta.read_context == []
+        assert meta.input_schema is None
         assert meta.output_target is None
         assert meta.output_note_type == "idea"
         assert meta.system_prompt is None
@@ -231,6 +232,30 @@ class TestSkillLoader:
         assert meta.output_note_type == "insight"
         assert meta.output_format == "json"
         assert meta.system_prompt == "You are a digest generator."
+
+    async def test_load_all_parses_input_schema(self, tmp_path) -> None:
+        skill_dir = tmp_path / "writer-skill"
+        skill_dir.mkdir()
+        (skill_dir / "skill.yaml").write_text(
+            "name: writer-skill\n"
+            "version: 1.0.0\n"
+            "category: process\n"
+            "is_dangerous: false\n"
+            "description: Writer\n"
+            "input_schema:\n"
+            "  type: object\n"
+            "  properties:\n"
+            "    items:\n"
+            "      type: array\n"
+            "  required:\n"
+            "    - items\n"
+        )
+        loader = SkillLoader(tmp_path)
+        registry = await loader.load_all()
+        meta = registry["writer-skill"]
+        assert meta.input_schema is not None
+        assert meta.input_schema["type"] == "object"
+        assert "items" in meta.input_schema["properties"]
 
     async def test_load_all_parses_credentials(self, tmp_path) -> None:
         skill_dir = tmp_path / "telegram-input"

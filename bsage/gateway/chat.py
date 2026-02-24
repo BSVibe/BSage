@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 if TYPE_CHECKING:
-    from bsage.core.llm import LiteLLMClient
+    from bsage.core.agent_loop import AgentLoop
     from bsage.core.prompt_registry import PromptRegistry
     from bsage.garden.writer import GardenWriter
 
@@ -71,18 +71,18 @@ def build_system_prompt(prompt_registry: PromptRegistry, vault_context: str) -> 
 async def handle_chat(
     message: str,
     history: list[dict[str, Any]],
-    llm_client: LiteLLMClient,
+    agent_loop: AgentLoop,
     garden_writer: GardenWriter,
     prompt_registry: PromptRegistry,
     context_paths: list[str] | None = None,
 ) -> str:
-    """Process a chat request: gather context, call LLM, log, return."""
+    """Process a chat request via AgentLoop with skill tool use."""
     paths = context_paths or DEFAULT_CONTEXT_PATHS
     vault_context = await gather_vault_context(garden_writer, paths)
     system = build_system_prompt(prompt_registry, vault_context)
 
     messages = [*history, {"role": "user", "content": message}]
-    response = await llm_client.chat(system=system, messages=messages)
+    response = await agent_loop.chat(system=system, messages=messages)
 
     # Brief one-line summary for the daily action log
     first_line = response.split("\n", 1)[0].strip()

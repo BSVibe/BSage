@@ -76,7 +76,7 @@ def create_routes(state: AppState) -> APIRouter:
 
     @api_router.get("/vault/actions")
     async def list_actions() -> list[str]:
-        notes = state.vault.read_notes("actions")
+        notes = await state.vault.read_notes("actions")
         return [str(p.name) for p in notes]
 
     @api_router.get("/config")
@@ -102,12 +102,14 @@ def create_routes(state: AppState) -> APIRouter:
 
     @api_router.post("/chat")
     async def chat(body: ChatMessage) -> dict[str, str]:
-        """Vault-aware conversational chat."""
+        """Vault-aware conversational chat with skill tool use."""
+        if state.agent_loop is None:
+            raise HTTPException(status_code=503, detail="Gateway not initialized")
         try:
             response = await handle_chat(
                 message=body.message,
                 history=body.history,
-                llm_client=state.llm_client,
+                agent_loop=state.agent_loop,
                 garden_writer=state.garden_writer,
                 prompt_registry=state.prompt_registry,
                 context_paths=body.context_paths,

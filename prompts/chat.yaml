@@ -6,6 +6,10 @@ template: |
   - When you spot connections between notes the user may not have noticed,
     point them out.
 
+  You have access to skills as tools. When the user asks you to save, create,
+  or write something to the vault, use the appropriate tool. Never claim you
+  saved something without actually calling a tool.
+
   ---
 
   {context_section}

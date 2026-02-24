@@ -43,6 +43,7 @@ def mock_state():
     state.skill_loader.get = MagicMock(return_value=_make_meta(name="garden-writer"))
     state.agent_loop = MagicMock()
     state.agent_loop.on_input = AsyncMock(return_value=[{"status": "ok"}])
+    state.agent_loop.chat = AsyncMock(return_value="Mocked chat response")
     state.vault = MagicMock()
     state.vault.read_notes = MagicMock(return_value=[])
     state.runtime_config = RuntimeConfig(
@@ -315,7 +316,12 @@ class TestChatEndpoint:
         response = client.post("/api/chat", json={})
         assert response.status_code == 422
 
-    def test_chat_llm_error_returns_500(self, client, mock_state) -> None:
-        mock_state.llm_client.chat = AsyncMock(side_effect=RuntimeError("LLM down"))
+    def test_chat_agent_loop_error_returns_500(self, client, mock_state) -> None:
+        mock_state.agent_loop.chat = AsyncMock(side_effect=RuntimeError("LLM down"))
         response = client.post("/api/chat", json={"message": "Hello"})
         assert response.status_code == 500
+
+    def test_chat_uninit_returns_503(self, client, mock_state) -> None:
+        mock_state.agent_loop = None
+        response = client.post("/api/chat", json={"message": "Hello"})
+        assert response.status_code == 503
