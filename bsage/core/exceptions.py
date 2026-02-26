@@ -27,3 +27,11 @@ class VaultPathError(BSageError):
 
 class SafeModeError(BSageError):
     """Raised when the safe mode system encounters a failure."""
+
+
+class PluginLoadError(BSageError):
+    """Raised when a plugin fails to load (missing plugin.py, invalid decorator)."""
+
+
+class PluginRunError(BSageError):
+    """Raised when a plugin fails during execution."""

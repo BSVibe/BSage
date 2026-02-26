@@ -199,6 +199,35 @@ class GardenWriter:
         logger.info("action_logged", skill_name=skill_name, path=str(log_path))
         await self._notify_sync("action", log_path, skill_name)
 
+    async def write_from_items(self, source: str, items: list[dict]) -> list[Path]:
+        """Convert a list of input items into garden notes.
+
+        This is the built-in equivalent of the former garden-writer skill.
+        Called automatically by AgentLoop.on_input() when raw_data contains
+        an ``items`` list.
+
+        Args:
+            source: Plugin name or data source identifier.
+            items: List of dicts with ``title``, ``content``, and optional ``tags``.
+
+        Returns:
+            List of paths to the created garden note files.
+        """
+        paths = []
+        for item in items:
+            path = await self.write_garden(
+                {
+                    "title": item.get("title", "Untitled"),
+                    "content": item.get("content", ""),
+                    "note_type": "idea",
+                    "source": source,
+                    "tags": item.get("tags", []),
+                }
+            )
+            paths.append(path)
+        logger.info("items_written", source=source, count=len(paths))
+        return paths
+
     async def read_notes(self, subdir: str) -> list[Path]:
         """Read notes from a vault subdirectory.
 

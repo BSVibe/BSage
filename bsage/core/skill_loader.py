@@ -1,4 +1,6 @@
-"""SkillLoader — scans skills/ directory, parses YAML, builds registry."""
+"""SkillLoader — scans skills/ directory for *.md files, builds registry."""
+
+from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
@@ -13,74 +15,93 @@ from bsage.core.exceptions import SkillLoadError
 logger = structlog.get_logger(__name__)
 
 _REQUIRED_FIELDS = {"name", "version", "category", "is_dangerous", "description"}
-
-
 _VALID_CATEGORIES = {"input", "process", "output"}
 
 
 class OutputTarget(Enum):
-    """Valid output targets for YAML-only skills."""
+    """Valid output targets for Skill LLM pipeline."""
 
     GARDEN = "garden"
     SEEDS = "seeds"
 
 
+def _split_frontmatter(text: str) -> tuple[str, str]:
+    """Split a Markdown document with YAML frontmatter into (frontmatter, body).
+
+    Expects the format::
+
+        ---
+        key: value
+        ---
+
+        Body content here.
+
+    Returns:
+        Tuple of (frontmatter_yaml_string, body_string).
+        If no frontmatter delimiters are found, returns ("", text).
+    """
+    if not text.startswith("---\n"):
+        return "", text
+    try:
+        end_idx = text.index("\n---\n", 4)
+    except ValueError:
+        return "", text
+    frontmatter = text[4:end_idx]
+    body = text[end_idx + 5 :]  # skip past \n---\n
+    return frontmatter, body
+
+
 @dataclass
 class SkillMeta:
-    """Metadata for a single Skill, parsed from skill.yaml."""
+    """Metadata for a Skill parsed from a skill.md file.
+
+    The frontmatter provides pipeline configuration and the Markdown body
+    serves as the LLM system prompt.
+    """
 
     name: str
     version: str
-    category: str  # input / process / output
+    category: str  # input | process | output
     is_dangerous: bool
     description: str
     author: str = ""
-    entrypoint: str | None = None
     trigger: dict | None = None
     credentials: dict | None = None
-    notification_entrypoint: str | None = None
 
-    # Tool use — JSON Schema for input_data (enables chat tool integration)
-    input_schema: dict | None = None
-
-    # YAML-only skill fields (used when entrypoint is None)
+    # LLM pipeline fields (YAML-only / Skill-specific)
     read_context: list[str] = field(default_factory=list)
     output_target: OutputTarget | None = None
     output_note_type: str = "idea"
-    system_prompt: str | None = None
     output_format: str | None = None
+
+    # LLM system prompt — loaded from the Markdown body
+    system_prompt: str | None = None
 
 
 class SkillLoader:
-    """Scans a skills directory for skill.yaml files and builds a registry."""
+    """Scans a skills directory for *.md files and builds a SkillMeta registry."""
 
     def __init__(self, skills_dir: Path) -> None:
         self._skills_dir = skills_dir
         self._registry: dict[str, SkillMeta] = {}
 
     async def load_all(self) -> dict[str, SkillMeta]:
-        """Scan skills_dir and load all valid Skill metadata into the registry."""
+        """Scan skills_dir for *.md files and load all valid Skill metadata."""
         self._registry.clear()
 
         if not self._skills_dir.is_dir():
             logger.warning("skills_dir_missing", path=str(self._skills_dir))
             return self._registry
 
-        for entry in sorted(self._skills_dir.iterdir()):
-            if not entry.is_dir():
+        for md_path in sorted(self._skills_dir.glob("*.md")):
+            if not md_path.is_file():
                 continue
-
-            yaml_path = entry / "skill.yaml"
-            if not yaml_path.exists():
-                logger.warning("skill_missing_yaml", path=str(entry))
-                continue
-
             try:
-                meta = self._parse_yaml(yaml_path)
+                meta = self._parse_md(md_path)
                 self._registry[meta.name] = meta
                 logger.info("skill_loaded", name=meta.name, category=meta.category)
             except Exception as exc:
-                logger.warning("skill_load_failed", path=str(yaml_path), error=str(exc))
+                logger.warning("skill_load_failed", path=str(md_path), error=str(exc))
 
         return self._registry
 
@@ -95,18 +116,25 @@ class SkillLoader:
         return self._registry[name]
 
     @staticmethod
-    def _parse_yaml(path: Path) -> SkillMeta:
-        """Parse a skill.yaml file into a SkillMeta dataclass.
+    def _parse_md(path: Path) -> SkillMeta:
+        """Parse a skill.md file into a SkillMeta dataclass.
+
+        The file must start with YAML frontmatter (---) followed by the
+        Markdown body, which becomes the LLM system prompt.
 
         Raises:
-            SkillLoadError: If required fields are missing.
-            yaml.YAMLError: If the YAML is malformed.
+            SkillLoadError: If required fields are missing or invalid.
+            yaml.YAMLError: If the frontmatter YAML is malformed.
         """
-        with open(path) as f:
-            data = yaml.safe_load(f)
+        text = path.read_text(encoding="utf-8")
+        frontmatter_str, body = _split_frontmatter(text)
 
+        if not frontmatter_str:
+            raise SkillLoadError(f"No YAML frontmatter found in {path}")
+
+        data = yaml.safe_load(frontmatter_str)
         if not isinstance(data, dict):
-            raise SkillLoadError(f"Invalid YAML structure in {path}")
+            raise SkillLoadError(f"Invalid frontmatter structure in {path}")
 
         missing = _REQUIRED_FIELDS - set(data.keys())
         if missing:
@@ -139,6 +167,12 @@ class SkillLoader:
                     f"Invalid output_target '{raw_target}' in {path}. Must be: {valid}"
                 ) from None
 
-        known_fields = {f.name for f in SkillMeta.__dataclass_fields__.values()}
+        known_fields = {f for f in SkillMeta.__dataclass_fields__}
         filtered = {k: v for k, v in data.items() if k in known_fields}
+
+        # Markdown body becomes the system prompt (overrides inline system_prompt if both present)
+        body_stripped = body.strip()
+        if body_stripped:
+            filtered["system_prompt"] = body_stripped
+
         return SkillMeta(**filtered)

@@ -1,9 +1,9 @@
-"""Scheduler — registers cron triggers for input and process skills via APScheduler."""
+"""Scheduler — registers cron triggers for input and process plugins/skills via APScheduler."""
 
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -11,9 +11,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 if TYPE_CHECKING:
     from bsage.core.protocols import SchedulerSupport
+    from bsage.core.runner import Runner
     from bsage.core.safe_mode import SafeModeGuard
-    from bsage.core.skill_loader import SkillMeta
-    from bsage.core.skill_runner import SkillRunner
 
 logger = structlog.get_logger(__name__)
 
@@ -21,22 +20,22 @@ _CRON_FIELDS = ("minute", "hour", "day", "month", "day_of_week")
 
 
 class Scheduler:
-    """Registers and manages cron triggers for input and process skills."""
+    """Registers and manages cron triggers for input and process plugins/skills."""
 
     def __init__(
         self,
         agent_loop: SchedulerSupport,
-        skill_runner: SkillRunner,
+        runner: Runner,
         safe_mode_guard: SafeModeGuard,
     ) -> None:
         self._agent_loop = agent_loop
-        self._skill_runner = skill_runner
+        self._runner = runner
         self._safe_mode_guard = safe_mode_guard
         self._scheduler = AsyncIOScheduler()
-        self._jobs: dict[str, str] = {}  # skill_name -> job_id
+        self._jobs: dict[str, str] = {}  # name -> job_id
 
-    def register_triggers(self, registry: dict[str, SkillMeta]) -> None:
-        """Register cron triggers for input and process skills."""
+    def register_triggers(self, registry: dict[str, Any]) -> None:
+        """Register cron triggers for input and process plugins/skills."""
         for name, meta in registry.items():
             if not meta.trigger or meta.trigger.get("type") != "cron":
                 continue
@@ -54,7 +53,7 @@ class Scheduler:
             except ValueError:
                 logger.warning(
                     "invalid_cron_schedule",
-                    skill=name,
+                    name=name,
                     schedule=schedule,
                 )
                 continue
@@ -68,7 +67,7 @@ class Scheduler:
                 name=f"BSage: {name}",
             )
             self._jobs[name] = job.id
-            logger.info("trigger_registered", skill=name, schedule=schedule)
+            logger.info("trigger_registered", name=name, schedule=schedule)
 
     def start(self) -> None:
         """Start the AsyncIO scheduler."""
@@ -100,38 +99,38 @@ class Scheduler:
             raise ValueError(f"Invalid cron expression: '{schedule}'. Expected 5 fields.")
         return dict(zip(_CRON_FIELDS, parts, strict=True))
 
-    async def _on_input_trigger(self, skill_name: str) -> None:
-        """Handle a cron trigger for an input skill.
+    async def _on_input_trigger(self, name: str) -> None:
+        """Handle a cron trigger for an input plugin.
 
-        Runs the skill and feeds results into AgentLoop via on_input.
+        Runs the plugin and feeds results into AgentLoop via on_input.
         """
-        logger.info("trigger_fired", skill=skill_name, category="input")
+        logger.info("trigger_fired", name=name, category="input")
         try:
             context = self._agent_loop.build_context()
-            meta = self._agent_loop.get_skill(skill_name)
-            result = await self._skill_runner.run(meta, context)
-            await self._agent_loop.on_input(skill_name, result)
+            meta = self._agent_loop.get_entry(name)
+            result = await self._runner.run(meta, context)
+            await self._agent_loop.on_input(name, result)
         except Exception:
-            logger.exception("trigger_execution_failed", skill=skill_name)
+            logger.exception("trigger_execution_failed", name=name)
 
-    async def _on_process_trigger(self, skill_name: str) -> None:
-        """Handle a cron trigger for a process skill.
+    async def _on_process_trigger(self, name: str) -> None:
+        """Handle a cron trigger for a process plugin/skill.
 
-        Runs the skill directly and writes an action log.
+        Runs the entry directly and writes an action log.
         SafeModeGuard check is performed before execution.
         """
-        logger.info("trigger_fired", skill=skill_name, category="process")
+        logger.info("trigger_fired", name=name, category="process")
         try:
-            meta = self._agent_loop.get_skill(skill_name)
+            meta = self._agent_loop.get_entry(name)
 
             approved = await self._safe_mode_guard.check(meta)
             if not approved:
-                logger.warning("process_trigger_rejected_by_safe_mode", skill=skill_name)
+                logger.warning("process_trigger_rejected_by_safe_mode", name=name)
                 return
 
             context = self._agent_loop.build_context()
-            result = await self._skill_runner.run(meta, context)
+            result = await self._runner.run(meta, context)
             summary = json.dumps(result, default=str)
-            await self._agent_loop.write_action(skill_name, summary)
+            await self._agent_loop.write_action(name, summary)
         except Exception:
-            logger.exception("trigger_execution_failed", skill=skill_name)
+            logger.exception("trigger_execution_failed", name=name)

@@ -1,12 +1,16 @@
-"""Tests for bsage.core.notification — NotificationRouter skill routing."""
+"""Tests for bsage.core.notification — NotificationRouter plugin routing."""
 
 from unittest.mock import AsyncMock, MagicMock
 
 from bsage.core.notification import NotificationRouter
-from bsage.core.skill_loader import SkillMeta
+from bsage.core.plugin_loader import PluginMeta
 
 
-def _make_meta(**overrides) -> SkillMeta:
+def _make_notify_fn():
+    return AsyncMock(return_value={"sent": True})
+
+
+def _make_plugin_meta(**overrides) -> PluginMeta:
     defaults = {
         "name": "telegram-input",
         "version": "1.0.0",
@@ -15,52 +19,69 @@ def _make_meta(**overrides) -> SkillMeta:
         "description": "Receive and send messages via Telegram",
     }
     defaults.update(overrides)
-    return SkillMeta(**defaults)
+    meta = PluginMeta(**defaults)
+    return meta
 
 
 class TestNotificationRouterSetup:
     """Test auto-discovery from registry."""
 
-    def test_setup_discovers_notification_capable_skills(self) -> None:
+    def test_setup_discovers_notification_capable_plugins(self) -> None:
         router = NotificationRouter()
+        tg_meta = _make_plugin_meta()
+        tg_meta._notify_fn = _make_notify_fn()
+        cal_meta = _make_plugin_meta(name="calendar-input", description="Fetch calendar events")
+        # calendar-input has no _notify_fn
+
         registry = {
-            "telegram-input": _make_meta(
-                notification_entrypoint="skill.py::notify",
-            ),
-            "calendar-input": _make_meta(
-                name="calendar-input",
-                description="Fetch calendar events",
-            ),
+            "telegram-input": tg_meta,
+            "calendar-input": cal_meta,
         }
         router.setup(registry, MagicMock(), MagicMock())
-        assert len(router._skills) == 1
-        assert router._skills[0].name == "telegram-input"
+        assert len(router._plugins) == 1
+        assert router._plugins[0].name == "telegram-input"
 
     def test_setup_finds_multiple_channels(self) -> None:
         router = NotificationRouter()
-        registry = {
-            "telegram-input": _make_meta(
-                notification_entrypoint="skill.py::notify",
-            ),
-            "slack-input": _make_meta(
-                name="slack-input",
-                notification_entrypoint="skill.py::notify",
-            ),
-        }
-        router.setup(registry, MagicMock(), MagicMock())
-        assert len(router._skills) == 2
+        tg_meta = _make_plugin_meta()
+        tg_meta._notify_fn = _make_notify_fn()
+        slack_meta = _make_plugin_meta(name="slack-input", description="Slack")
+        slack_meta._notify_fn = _make_notify_fn()
 
-    def test_setup_with_no_notification_skills(self) -> None:
-        router = NotificationRouter()
         registry = {
-            "calendar-input": _make_meta(name="calendar-input"),
+            "telegram-input": tg_meta,
+            "slack-input": slack_meta,
         }
         router.setup(registry, MagicMock(), MagicMock())
-        assert len(router._skills) == 0
+        assert len(router._plugins) == 2
+
+    def test_setup_with_no_notification_plugins(self) -> None:
+        router = NotificationRouter()
+        cal_meta = _make_plugin_meta(name="calendar-input")
+        # no _notify_fn
+
+        registry = {"calendar-input": cal_meta}
+        router.setup(registry, MagicMock(), MagicMock())
+        assert len(router._plugins) == 0
+
+    def test_setup_ignores_skill_meta_entries(self) -> None:
+        from bsage.core.skill_loader import SkillMeta
+
+        router = NotificationRouter()
+        skill = SkillMeta(
+            name="weekly-digest",
+            version="1.0.0",
+            category="process",
+            is_dangerous=False,
+            description="Weekly digest",
+        )
+        registry = {"weekly-digest": skill}
+        router.setup(registry, MagicMock(), MagicMock())
+        assert len(router._plugins) == 0
 
 
 class TestNotificationRouterSend:
-    """Test notification delivery through skills."""
+    """Test notification delivery through plugins."""
 
     async def test_send_calls_run_notify(self) -> None:
         router = NotificationRouter()
@@ -69,11 +90,10 @@ class TestNotificationRouterSend:
         ctx = MagicMock()
         builder = MagicMock(return_value=ctx)
 
-        registry = {
-            "telegram-input": _make_meta(
-                notification_entrypoint="skill.py::notify",
-            ),
-        }
+        meta = _make_plugin_meta()
+        meta._notify_fn = _make_notify_fn()
+
+        registry = {"telegram-input": meta}
         router.setup(registry, runner, builder)
         await router.send("Hello!", level="info")
 
@@ -90,11 +110,10 @@ class TestNotificationRouterSend:
         ctx.notify = router  # would cause recursion if not cleared
         builder = MagicMock(return_value=ctx)
 
-        registry = {
-            "telegram-input": _make_meta(
-                notification_entrypoint="skill.py::notify",
-            ),
-        }
+        meta = _make_plugin_meta()
+        meta._notify_fn = _make_notify_fn()
+
+        registry = {"telegram-input": meta}
         router.setup(registry, runner, builder)
         await router.send("test")
 
@@ -106,21 +125,21 @@ class TestNotificationRouterSend:
         runner.run_notify = AsyncMock(return_value={})
         builder = MagicMock(return_value=MagicMock())
 
+        tg_meta = _make_plugin_meta()
+        tg_meta._notify_fn = _make_notify_fn()
+        slack_meta = _make_plugin_meta(name="slack-input", description="Slack")
+        slack_meta._notify_fn = _make_notify_fn()
+
         registry = {
-            "telegram-input": _make_meta(
-                notification_entrypoint="skill.py::notify",
-            ),
-            "slack-input": _make_meta(
-                name="slack-input",
-                notification_entrypoint="skill.py::notify",
-            ),
+            "telegram-input": tg_meta,
+            "slack-input": slack_meta,
         }
         router.setup(registry, runner, builder)
         await router.send("broadcast")
 
         assert runner.run_notify.call_count == 2
 
-    async def test_send_continues_on_skill_failure(self) -> None:
+    async def test_send_continues_on_plugin_failure(self) -> None:
         router = NotificationRouter()
         runner = MagicMock()
         runner.run_notify = AsyncMock(
@@ -128,15 +147,14 @@ class TestNotificationRouterSend:
         )
         builder = MagicMock(return_value=MagicMock())
 
+        broken_meta = _make_plugin_meta(name="broken-input", description="Broken")
+        broken_meta._notify_fn = _make_notify_fn()
+        working_meta = _make_plugin_meta(name="working-input", description="Working")
+        working_meta._notify_fn = _make_notify_fn()
+
         registry = {
-            "broken-input": _make_meta(
-                name="broken-input",
-                notification_entrypoint="skill.py::notify",
-            ),
-            "working-input": _make_meta(
-                name="working-input",
-                notification_entrypoint="skill.py::notify",
-            ),
+            "broken-input": broken_meta,
+            "working-input": working_meta,
         }
         router.setup(registry, runner, builder)
         await router.send("test")

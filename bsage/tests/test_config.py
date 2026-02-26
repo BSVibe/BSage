@@ -13,6 +13,7 @@ class TestSettings:
     def test_default_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Settings should have sensible defaults."""
         monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.delenv("LLM_API_BASE", raising=False)
         monkeypatch.delenv("VAULT_PATH", raising=False)
         monkeypatch.setenv("LLM_MODEL", "anthropic/claude-sonnet-4-20250514")
 

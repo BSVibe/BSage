@@ -6,19 +6,18 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from bsage.core.skill_context import SkillContext
-    from bsage.core.skill_loader import SkillMeta
 
 
-class SkillRunnerLike(Protocol):
-    """Protocol for objects that can execute skills."""
+class RunnerLike(Protocol):
+    """Protocol for objects that can execute plugins or skills."""
 
-    async def run(self, skill_meta: SkillMeta, context: SkillContext) -> dict: ...
+    async def run(self, meta: Any, context: SkillContext) -> dict: ...
 
 
 class NotifyRunnerLike(Protocol):
-    """Protocol for skill runners that support notification entrypoints."""
+    """Protocol for runners that support notification entrypoints."""
 
-    async def run_notify(self, skill_meta: SkillMeta, context: SkillContext) -> dict: ...
+    async def run_notify(self, meta: Any, context: SkillContext) -> dict: ...
 
 
 class ContextBuilderLike(Protocol):
@@ -32,8 +31,10 @@ class SchedulerSupport(Protocol):
 
     def build_context(self, input_data: dict[str, Any] | None = None) -> SkillContext: ...
 
-    def get_skill(self, name: str) -> SkillMeta: ...
+    def get_entry(self, name: str) -> Any: ...
 
-    async def on_input(self, skill_name: str, raw_data: dict[str, Any]) -> list[dict[str, Any]]: ...
+    async def on_input(
+        self, plugin_name: str, raw_data: dict[str, Any]
+    ) -> list[dict[str, Any]]: ...
 
-    async def write_action(self, skill_name: str, summary: str) -> None: ...
+    async def write_action(self, name: str, summary: str) -> None: ...

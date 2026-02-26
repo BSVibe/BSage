@@ -361,3 +361,69 @@ class TestGardenWriterSync:
         backend.sync.assert_called_once()
         event = backend.sync.call_args[0][0]
         assert event.source == "dict-source"
+
+
+class TestWriteFromItems:
+    """Test GardenWriter.write_from_items — embeds former garden-writer plugin logic."""
+
+    @pytest.mark.asyncio
+    async def test_write_from_items_creates_notes(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        items = [
+            {"title": "Item One", "content": "Content for item one"},
+            {"title": "Item Two", "content": "Content for item two", "tags": ["tag1"]},
+        ]
+        paths = await writer.write_from_items("test-plugin", items)
+
+        assert len(paths) == 2
+        for path in paths:
+            assert path.exists()
+            assert path.suffix == ".md"
+
+    @pytest.mark.asyncio
+    async def test_write_from_items_uses_idea_note_type(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        items = [{"title": "My Idea", "content": "Some content"}]
+        paths = await writer.write_from_items("test-plugin", items)
+
+        content = paths[0].read_text()
+        assert "type: idea" in content
+
+    @pytest.mark.asyncio
+    async def test_write_from_items_sets_source(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        items = [{"title": "Note", "content": "Content"}]
+        paths = await writer.write_from_items("calendar-input", items)
+
+        content = paths[0].read_text()
+        assert "source: calendar-input" in content
+
+    @pytest.mark.asyncio
+    async def test_write_from_items_empty_list_returns_empty(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        paths = await writer.write_from_items("test-plugin", [])
+        assert paths == []
+
+    @pytest.mark.asyncio
+    async def test_write_from_items_uses_untitled_for_missing_title(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        items = [{"content": "No title here"}]
+        paths = await writer.write_from_items("test-plugin", items)
+
+        assert len(paths) == 1
+        assert paths[0].name == "untitled.md"

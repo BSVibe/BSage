@@ -41,11 +41,14 @@ def mock_state():
         }
     )
     state.skill_loader.get = MagicMock(return_value=_make_meta(name="garden-writer"))
+    state.plugin_loader = MagicMock()
+    state.plugin_loader.load_all = AsyncMock(return_value={})
+    state.plugin_loader.get = MagicMock(return_value=_make_meta(name="garden-writer"))
     state.agent_loop = MagicMock()
     state.agent_loop.on_input = AsyncMock(return_value=[{"status": "ok"}])
     state.agent_loop.chat = AsyncMock(return_value="Mocked chat response")
     state.vault = MagicMock()
-    state.vault.read_notes = MagicMock(return_value=[])
+    state.vault.read_notes = AsyncMock(return_value=[])
     state.runtime_config = RuntimeConfig(
         llm_model="anthropic/claude-sonnet-4-20250514",
         llm_api_key="test-key",
@@ -109,25 +112,25 @@ class TestSkillsEndpoint:
 
 
 class TestRunSkillEndpoint:
-    """Test POST /api/skills/{name}/run."""
+    """Test POST /api/plugins/{name}/run."""
 
     def test_run_skill_returns_results(self, client) -> None:
-        response = client.post("/api/skills/garden-writer/run")
+        response = client.post("/api/plugins/garden-writer/run")
         assert response.status_code == 200
         data = response.json()
-        assert data["skill"] == "garden-writer"
+        assert data["plugin"] == "garden-writer"
         assert len(data["results"]) == 1
 
     def test_run_unknown_skill_returns_404(self, client, mock_state) -> None:
-        from bsage.core.exceptions import SkillLoadError
+        from bsage.core.exceptions import PluginLoadError
 
-        mock_state.skill_loader.get = MagicMock(side_effect=SkillLoadError("not found"))
-        response = client.post("/api/skills/nonexistent/run")
+        mock_state.plugin_loader.get = MagicMock(side_effect=PluginLoadError("not found"))
+        response = client.post("/api/plugins/nonexistent/run")
         assert response.status_code == 404
 
     def test_run_skill_uninit_returns_503(self, client, mock_state) -> None:
         mock_state.agent_loop = None
-        response = client.post("/api/skills/garden-writer/run")
+        response = client.post("/api/plugins/garden-writer/run")
         assert response.status_code == 503
 
 
@@ -142,7 +145,7 @@ class TestActionsEndpoint:
     def test_list_actions_returns_filenames(self, client, mock_state) -> None:
         from pathlib import Path
 
-        mock_state.vault.read_notes = MagicMock(
+        mock_state.vault.read_notes = AsyncMock(
             return_value=[Path("2026-02-22.md"), Path("2026-02-21.md")]
         )
         response = client.get("/api/vault/actions")

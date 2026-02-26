@@ -9,86 +9,82 @@ import structlog
 from bsage.core.protocols import ContextBuilderLike, NotifyRunnerLike
 
 if TYPE_CHECKING:
-    from bsage.core.skill_loader import SkillMeta
+    from bsage.core.plugin_loader import PluginMeta
 
 logger = structlog.get_logger(__name__)
 
 
 @runtime_checkable
 class NotificationInterface(Protocol):
-    """Interface for delivering messages to the user.
-
-    Process skills use context.notify.send() to notify the user.
-    The framework mediates channel selection (CLI, Telegram, etc.).
-    """
+    """Interface for delivering messages to the user."""
 
     async def send(self, message: str, level: str = "info") -> None: ...
 
 
 class NotificationRouter:
-    """Routes notifications through input skills that have a notification_entrypoint.
+    """Routes notifications through plugins that have a notification handler.
 
-    Input skills with notification_entrypoint (e.g. "skill.py::notify") can
+    Input plugins with a ``_notify_fn`` (registered via ``@execute.notify``) can
     send messages back through the same channel they receive from.
-    Example: a Telegram input skill can also send notifications via the same bot.
+    Example: a Telegram input plugin can also send notifications via the same bot.
 
-    Auto-discovers notification-capable skills from the registry during setup().
+    Auto-discovers notification-capable plugins from the registry during setup().
     """
 
     def __init__(self) -> None:
-        self._skills: list[SkillMeta] = []
-        self._skill_runner: NotifyRunnerLike | None = None
+        self._plugins: list[PluginMeta] = []
+        self._runner: NotifyRunnerLike | None = None
         self._context_builder: ContextBuilderLike | None = None
 
     def setup(
         self,
-        registry: dict[str, SkillMeta],
-        skill_runner: NotifyRunnerLike,
+        registry: dict[str, object],
+        runner: NotifyRunnerLike,
         context_builder: ContextBuilderLike,
     ) -> None:
-        """Auto-discover notification-capable skills from the registry.
-
-        Finds all skills with a notification_entrypoint and registers them.
+        """Auto-discover notification-capable plugins from the unified registry.
 
         Args:
-            registry: Full skill registry to scan.
-            skill_runner: SkillRunner instance with run_notify support.
+            registry: Full plugin+skill registry to scan.
+            runner: Runner instance with run_notify support.
             context_builder: Callable(input_data=dict) -> SkillContext.
         """
-        self._skills = [meta for meta in registry.values() if meta.notification_entrypoint]
-        self._skill_runner = skill_runner
+        from bsage.core.plugin_loader import PluginMeta
+
+        self._plugins = [
+            meta
+            for meta in registry.values()
+            if isinstance(meta, PluginMeta) and meta._notify_fn is not None
+        ]
+        self._runner = runner
         self._context_builder = context_builder
-        if self._skills:
+        if self._plugins:
             logger.info(
                 "notification_channels_discovered",
-                skills=[m.name for m in self._skills],
+                plugins=[m.name for m in self._plugins],
             )
 
     async def send(self, message: str, level: str = "info") -> None:
-        """Send a notification through discovered notification skills.
+        """Send a notification through discovered notification plugins.
 
-        Each skill's notification_entrypoint is called with
-        input_data={"message": ..., "level": ...}.
-        context.notify is set to None to prevent recursion.
-
-        Falls back silently (log only) when no skills are available.
+        Falls back silently (log only) when no plugins are available.
         """
-        if not self._skills or not self._skill_runner or not self._context_builder:
+        if not self._plugins or not self._runner or not self._context_builder:
             logger.info("notification_no_channel", level=level)
             return
 
-        for meta in self._skills:
+        for meta in self._plugins:
             try:
                 ctx = self._context_builder(
                     input_data={"message": message, "level": level},
                 )
-                # Prevent recursion: notification skills cannot send notifications
+                # Prevent recursion: notification plugins cannot send notifications
                 ctx.notify = None
-                await self._skill_runner.run_notify(meta, ctx)
-                logger.info("notification_sent", skill=meta.name, level=level)
+                await self._runner.run_notify(meta, ctx)
+                logger.info("notification_sent", plugin=meta.name, level=level)
             except Exception:
                 logger.warning(
-                    "notification_skill_failed",
-                    skill=meta.name,
+                    "notification_plugin_failed",
+                    plugin=meta.name,
                     exc_info=True,
                 )

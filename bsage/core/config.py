@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # Paths
     vault_path: Path = Path("./vault")
     skills_dir: Path = Path("./skills")
+    plugins_dir: Path = Path("./plugins")
     tmp_dir: Path = Path("./tmp")
     credentials_dir: Path = Path("./.credentials")
     prompts_dir: Path = Path("./prompts")

@@ -5,14 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import structlog
 
-from bsage.core.protocols import ContextBuilderLike, SkillRunnerLike
-
-if TYPE_CHECKING:
-    from bsage.core.skill_loader import SkillMeta
+from bsage.core.protocols import ContextBuilderLike, RunnerLike
 
 logger = structlog.get_logger(__name__)
 
@@ -57,8 +54,8 @@ class SyncManager:
 
     def __init__(self) -> None:
         self._backends: dict[str, SyncBackend] = {}
-        self._output_skills: list[SkillMeta] = []
-        self._skill_runner: SkillRunnerLike | None = None
+        self._output_skills: list[Any] = []
+        self._skill_runner: RunnerLike | None = None
         self._context_builder: ContextBuilderLike | None = None
 
     def register(self, backend: SyncBackend) -> None:
@@ -81,8 +78,8 @@ class SyncManager:
 
     def register_output_skills(
         self,
-        skills: list[SkillMeta],
-        skill_runner: SkillRunnerLike,
+        skills: list[Any],
+        skill_runner: RunnerLike,
         context_builder: ContextBuilderLike,
     ) -> None:
         """Register output skills for execution on write events.

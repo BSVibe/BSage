@@ -1,18 +1,15 @@
-"""SkillRunner — executes skills (Python or LLM-based) with context injection."""
+"""SkillRunner — executes LLM-based Skills (GATHER → LLM → APPLY pipeline)."""
 
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import json
 import re
-from pathlib import Path
-from typing import TYPE_CHECKING, assert_never
+from typing import TYPE_CHECKING
 
 import structlog
 
-from bsage.core.credential_store import CredentialStore
-from bsage.core.exceptions import CredentialNotFoundError, SkillRunError
+from bsage.core.exceptions import SkillRunError
 from bsage.core.skill_loader import OutputTarget
 from bsage.garden.vault import VaultPathError
 
@@ -33,53 +30,35 @@ _TILDE_FENCE_RE = re.compile(r"~~~+(?:\s*json)?\s*\n(.*?)~~~+", re.DOTALL | re.I
 
 
 def _strip_json_fence(text: str) -> str:
-    """Remove markdown code fences around JSON content.
-
-    Handles fences with language tags, variable-length fence markers,
-    and prose before/after the fenced block.
-    """
+    """Remove markdown code fences around JSON content."""
     match = _BACKTICK_FENCE_RE.search(text)
     if match:
         return match.group(1).strip()
-
     match = _TILDE_FENCE_RE.search(text)
     if match:
         return match.group(1).strip()
-
     return text.strip()
 
 
 class SkillRunner:
-    """Dispatches skill execution to either Python code or LLM-based processing."""
+    """Executes LLM-based Skills via the GATHER → LLM → APPLY pipeline."""
 
     def __init__(
         self,
-        skills_dir: Path,
-        credential_store: CredentialStore | None = None,
         prompt_registry: PromptRegistry | None = None,
     ) -> None:
-        self._skills_dir = skills_dir
-        self._credential_store = credential_store
         self._prompt_registry = prompt_registry
 
     async def run(self, skill_meta: SkillMeta, context: SkillContext) -> dict:
-        """Execute a skill and return the result dict.
-
-        For skills with an entrypoint, loads and runs the Python module.
-        For yaml-only skills, delegates to LLM-based execution.
+        """Execute a Skill via the 3-phase LLM pipeline and return the result dict.
 
         Raises:
             SkillRunError: On execution failure.
         """
         logger.info("skill_run_start", name=skill_meta.name, category=skill_meta.category)
 
-        await self._auto_inject_credentials(skill_meta.name, context)
-
         try:
-            if skill_meta.entrypoint:
-                result = await self._run_python(skill_meta, context)
-            else:
-                result = await self._run_llm(skill_meta, context)
+            result = await self._run_llm(skill_meta, context)
         except SkillRunError:
             raise
         except Exception as exc:
@@ -88,88 +67,8 @@ class SkillRunner:
         logger.info("skill_run_complete", name=skill_meta.name)
         return result
 
-    async def run_notify(self, skill_meta: SkillMeta, context: SkillContext) -> dict:
-        """Execute the notification entrypoint of a skill.
-
-        Input skills with a notification_entrypoint can send messages back
-        through the same channel they receive from (e.g. Telegram bot).
-
-        Raises:
-            SkillRunError: If the skill has no notification_entrypoint or execution fails.
-        """
-        if not skill_meta.notification_entrypoint:
-            raise SkillRunError(f"Skill '{skill_meta.name}' has no notification_entrypoint")
-
-        logger.info("skill_notify_start", name=skill_meta.name)
-
-        await self._auto_inject_credentials(skill_meta.name, context)
-
-        try:
-            result = await self._run_entrypoint(
-                skill_meta.name, skill_meta.notification_entrypoint, context
-            )
-        except SkillRunError:
-            raise
-        except Exception as exc:
-            raise SkillRunError(f"Skill '{skill_meta.name}' notification failed: {exc}") from exc
-
-        logger.info("skill_notify_complete", name=skill_meta.name)
-        return result
-
-    async def _auto_inject_credentials(self, skill_name: str, context: SkillContext) -> None:
-        """Inject credentials into context.credentials if available.
-
-        Looks up credentials from the internal CredentialStore and sets
-        context.credentials to the resolved dict for the skill to use directly.
-        """
-        if self._credential_store is None:
-            return
-        try:
-            creds = await self._credential_store.get(skill_name)
-            context.credentials = dict(creds)
-        except CredentialNotFoundError:
-            pass  # No credentials for this skill is normal
-
-    async def _run_python(self, skill_meta: SkillMeta, context: SkillContext) -> dict:
-        """Load and execute a Python skill module dynamically."""
-        if not skill_meta.entrypoint:
-            raise SkillRunError(f"Skill '{skill_meta.name}' has no entrypoint")
-        return await self._run_entrypoint(skill_meta.name, skill_meta.entrypoint, context)
-
-    async def _run_entrypoint(
-        self, skill_name: str, entrypoint: str, context: SkillContext
-    ) -> dict:
-        """Parse an entrypoint string, load the module, and call the function."""
-        parts = entrypoint.split("::")
-        if len(parts) != 2:  # noqa: PLR2004
-            raise SkillRunError(
-                f"Invalid entrypoint format '{entrypoint}'. Expected 'module.py::function'."
-            )
-        module_file, func_name = parts
-        module_path = self._skills_dir / skill_name / module_file
-
-        # Ensure resolved path stays within the skills directory
-        if not module_path.resolve().is_relative_to(self._skills_dir.resolve()):
-            raise SkillRunError(f"Path traversal detected in skill '{skill_name}'")
-
-        if not module_path.exists():
-            raise SkillRunError(f"Skill module not found: {module_path}")
-
-        spec = importlib.util.spec_from_file_location("skill_module", module_path)
-        if spec is None or spec.loader is None:
-            raise SkillRunError(f"Cannot load skill module: {module_path}")
-
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        func = getattr(module, func_name, None)
-        if func is None:
-            raise SkillRunError(f"Function '{func_name}' not found in {module_path}")
-
-        return await func(context)
-
     async def _run_llm(self, skill_meta: SkillMeta, context: SkillContext) -> dict:
-        """Execute a yaml-only skill via 3-phase pipeline: GATHER → LLM → APPLY."""
+        """Execute a Skill via 3-phase pipeline: GATHER → LLM → APPLY."""
         # Phase 1: GATHER — read vault notes if read_context is defined
         vault_context = await self._gather_vault_context(skill_meta.read_context, context)
 
@@ -212,7 +111,6 @@ class SkillRunner:
         input_data: dict | None,
     ) -> tuple[str, list[dict]]:
         """Build system prompt and user message for LLM call."""
-        # System: identity + skill-specific instructions
         identity = ""
         if self._prompt_registry:
             with contextlib.suppress(KeyError):
@@ -228,23 +126,14 @@ class SkillRunner:
                     description=skill_meta.description,
                 )
             except KeyError:
-                skill_prompt = (
-                    f"You are executing the '{skill_meta.name}' skill.\n"
-                    f"Description: {skill_meta.description}\n"
-                    f"Process the input data and return a structured result."
-                )
+                skill_prompt = self._default_prompt(skill_meta)
         else:
-            skill_prompt = (
-                f"You are executing the '{skill_meta.name}' skill.\n"
-                f"Description: {skill_meta.description}\n"
-                f"Process the input data and return a structured result."
-            )
+            skill_prompt = self._default_prompt(skill_meta)
 
         system = f"{identity}\n\n{skill_prompt}".strip() if identity else skill_prompt
         if skill_meta.output_format == "json":
             system += "\nReturn your response as valid JSON."
 
-        # User: data (vault context + input)
         user_parts: list[str] = []
         if vault_context:
             user_parts.append(f"## Reference Notes\n{vault_context}")
@@ -255,6 +144,14 @@ class SkillRunner:
 
         return system, [{"role": "user", "content": user_content}]
 
+    @staticmethod
+    def _default_prompt(skill_meta: SkillMeta) -> str:
+        return (
+            f"You are executing the '{skill_meta.name}' skill.\n"
+            f"Description: {skill_meta.description}\n"
+            f"Process the input data and return a structured result."
+        )
+
     async def _apply_output(
         self, skill_meta: SkillMeta, context: SkillContext, response: str
     ) -> dict:
@@ -264,7 +161,7 @@ class SkillRunner:
 
         content = response
         if skill_meta.output_format == "json":
-            content = self._strip_json_fence(response)
+            content = _strip_json_fence(response)
 
         if skill_meta.output_target is OutputTarget.GARDEN:
             path = await context.garden.write_garden(
@@ -278,15 +175,16 @@ class SkillRunner:
             return {"llm_response": response, "output_path": str(path)}
 
         if skill_meta.output_target is OutputTarget.SEEDS:
-            data = {"content": content, "source": skill_meta.name}
+            data: dict = {"content": content, "source": skill_meta.name}
             json_parse_error = False
             if skill_meta.output_format == "json":
                 try:
                     parsed = json.loads(content)
-                    if isinstance(parsed, dict):
-                        data = parsed
-                    else:
-                        data = {"content": parsed, "source": skill_meta.name}
+                    data = (
+                        parsed
+                        if isinstance(parsed, dict)
+                        else {"content": parsed, "source": skill_meta.name}
+                    )
                 except json.JSONDecodeError:
                     json_parse_error = True
                     logger.warning(
@@ -300,8 +198,9 @@ class SkillRunner:
                 result["json_parse_error"] = True
             return result
 
-        else:
-            assert_never(skill_meta.output_target)
+        from typing import assert_never
+
+        assert_never(skill_meta.output_target)
 
     @staticmethod
     def _strip_json_fence(text: str) -> str:

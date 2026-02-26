@@ -35,6 +35,17 @@ class ConfigUpdate(BaseModel):
     safe_mode: bool | None = None
 
 
+def _meta_to_dict(meta: Any) -> dict[str, Any]:
+    """Serialize a PluginMeta or SkillMeta to a JSON-safe dict."""
+    return {
+        "name": meta.name,
+        "version": meta.version,
+        "category": meta.category,
+        "is_dangerous": meta.is_dangerous,
+        "description": meta.description,
+    }
+
+
 def create_routes(state: AppState) -> APIRouter:
     """Create API routes with injected application state."""
     api_router = APIRouter(prefix="/api")
@@ -43,24 +54,23 @@ def create_routes(state: AppState) -> APIRouter:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @api_router.get("/plugins")
+    async def list_plugins() -> list[dict[str, Any]]:
+        """List all loaded Plugins (code-based)."""
+        registry = await state.plugin_loader.load_all()
+        return [_meta_to_dict(meta) for meta in registry.values()]
+
     @api_router.get("/skills")
     async def list_skills() -> list[dict[str, Any]]:
+        """List all loaded Skills (LLM-based)."""
         registry = await state.skill_loader.load_all()
-        return [
-            {
-                "name": meta.name,
-                "version": meta.version,
-                "category": meta.category,
-                "is_dangerous": meta.is_dangerous,
-                "description": meta.description,
-            }
-            for meta in registry.values()
-        ]
+        return [_meta_to_dict(meta) for meta in registry.values()]
 
-    @api_router.post("/skills/{name}/run")
-    async def run_skill(name: str) -> dict[str, Any]:
+    @api_router.post("/plugins/{name}/run")
+    async def run_plugin(name: str) -> dict[str, Any]:
+        """Trigger a plugin by name via AgentLoop.on_input."""
         try:
-            state.skill_loader.get(name)
+            state.plugin_loader.get(name)
         except Exception as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -69,9 +79,9 @@ def create_routes(state: AppState) -> APIRouter:
 
         try:
             results = await state.agent_loop.on_input(name, {})
-            return {"skill": name, "results": results}
+            return {"plugin": name, "results": results}
         except Exception as exc:
-            logger.exception("skill_run_failed", skill=name)
+            logger.exception("plugin_run_failed", plugin=name)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @api_router.get("/vault/actions")
@@ -102,7 +112,7 @@ def create_routes(state: AppState) -> APIRouter:
 
     @api_router.post("/chat")
     async def chat(body: ChatMessage) -> dict[str, str]:
-        """Vault-aware conversational chat with skill tool use."""
+        """Vault-aware conversational chat with plugin tool use."""
         if state.agent_loop is None:
             raise HTTPException(status_code=503, detail="Gateway not initialized")
         try:

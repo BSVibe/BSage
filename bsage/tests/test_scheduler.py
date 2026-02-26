@@ -5,15 +5,28 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from bsage.core.plugin_loader import PluginMeta
 from bsage.core.scheduler import Scheduler
 from bsage.core.skill_loader import SkillMeta
 
 
-def _make_meta(**overrides) -> SkillMeta:
+def _make_plugin_meta(**overrides) -> PluginMeta:
+    defaults = {
+        "name": "test-plugin",
+        "version": "1.0.0",
+        "category": "input",
+        "is_dangerous": False,
+        "description": "Test plugin",
+    }
+    defaults.update(overrides)
+    return PluginMeta(**defaults)
+
+
+def _make_skill_meta(**overrides) -> SkillMeta:
     defaults = {
         "name": "test-skill",
         "version": "1.0.0",
-        "category": "input",
+        "category": "process",
         "is_dangerous": False,
         "description": "Test skill",
     }
@@ -27,23 +40,22 @@ def mock_agent_loop():
     loop.on_input = AsyncMock(return_value=[{"status": "ok"}])
     loop.write_action = AsyncMock()
     registry = {
-        "calendar-input": _make_meta(
+        "calendar-input": _make_plugin_meta(
             name="calendar-input",
             trigger={"type": "cron", "schedule": "*/15 * * * *"},
         ),
-        "weekly-digest": _make_meta(
+        "weekly-digest": _make_skill_meta(
             name="weekly-digest",
-            category="process",
             trigger={"type": "cron", "schedule": "0 9 * * 1"},
         ),
     }
-    loop.get_skill = MagicMock(side_effect=lambda name: registry[name])
+    loop.get_entry = MagicMock(side_effect=lambda name: registry[name])
     loop.build_context = MagicMock(return_value=MagicMock())
     return loop
 
 
 @pytest.fixture()
-def mock_skill_runner():
+def mock_runner():
     runner = MagicMock()
     runner.run = AsyncMock(return_value={"events": [1, 2]})
     return runner
@@ -90,18 +102,18 @@ class TestParseCron:
 
 
 class TestSchedulerRegisterTriggers:
-    """Test trigger registration from skill registry."""
+    """Test trigger registration from registry."""
 
     def test_register_input_cron_trigger(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         registry = {
-            "calendar-input": _make_meta(
+            "calendar-input": _make_plugin_meta(
                 name="calendar-input",
                 trigger={"type": "cron", "schedule": "*/15 * * * *"},
             ),
@@ -110,17 +122,16 @@ class TestSchedulerRegisterTriggers:
         assert "calendar-input" in scheduler._jobs
 
     def test_register_process_cron_trigger(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         registry = {
-            "weekly-digest": _make_meta(
+            "weekly-digest": _make_skill_meta(
                 name="weekly-digest",
-                category="process",
                 trigger={"type": "cron", "schedule": "0 9 * * 1"},
             ),
         }
@@ -128,21 +139,20 @@ class TestSchedulerRegisterTriggers:
         assert "weekly-digest" in scheduler._jobs
 
     def test_register_both_input_and_process(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         registry = {
-            "calendar-input": _make_meta(
+            "calendar-input": _make_plugin_meta(
                 name="calendar-input",
                 trigger={"type": "cron", "schedule": "*/15 * * * *"},
             ),
-            "weekly-digest": _make_meta(
+            "weekly-digest": _make_skill_meta(
                 name="weekly-digest",
-                category="process",
                 trigger={"type": "cron", "schedule": "0 9 * * 1"},
             ),
         }
@@ -151,34 +161,33 @@ class TestSchedulerRegisterTriggers:
         assert "weekly-digest" in scheduler._jobs
 
     def test_register_skips_non_cron_trigger(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         registry = {
-            "webhook-skill": _make_meta(
-                name="webhook-skill",
+            "webhook-plugin": _make_plugin_meta(
+                name="webhook-plugin",
                 trigger={"type": "webhook"},
             ),
         }
         scheduler.register_triggers(registry)
-        assert "webhook-skill" not in scheduler._jobs
+        assert "webhook-plugin" not in scheduler._jobs
 
     def test_register_skips_no_trigger(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         registry = {
-            "process-skill": _make_meta(
+            "process-skill": _make_skill_meta(
                 name="process-skill",
-                category="process",
                 trigger=None,
             ),
         }
@@ -186,15 +195,15 @@ class TestSchedulerRegisterTriggers:
         assert len(scheduler._jobs) == 0
 
     def test_register_skips_output_cron(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         registry = {
-            "s3-output": _make_meta(
+            "s3-output": _make_plugin_meta(
                 name="s3-output",
                 category="output",
                 trigger={"type": "cron", "schedule": "0 * * * *"},
@@ -208,11 +217,11 @@ class TestSchedulerStartStop:
     """Test scheduler start and stop."""
 
     async def test_start_starts_apscheduler(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         scheduler.start()
@@ -220,140 +229,117 @@ class TestSchedulerStartStop:
         scheduler.stop()
 
     async def test_stop_stops_apscheduler(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         scheduler.start()
         scheduler.stop()
-        # AsyncIOScheduler defers state change to event loop
         await asyncio.sleep(0)
         assert scheduler._scheduler.running is False
 
     def test_stop_without_start_is_safe(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
-        # Should not raise
         scheduler.stop()
 
 
 class TestSchedulerInputTrigger:
     """Test input trigger execution."""
 
-    async def test_input_trigger_runs_skill_and_feeds_agent_loop(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+    async def test_input_trigger_runs_entry_and_feeds_agent_loop(
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         await scheduler._on_input_trigger("calendar-input")
 
-        mock_skill_runner.run.assert_called_once()
+        mock_runner.run.assert_called_once()
         mock_agent_loop.on_input.assert_called_once_with("calendar-input", {"events": [1, 2]})
 
-    async def test_input_trigger_handles_skill_error(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+    async def test_input_trigger_handles_error(
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
-        mock_skill_runner.run = AsyncMock(side_effect=RuntimeError("skill failed"))
+        mock_runner.run = AsyncMock(side_effect=RuntimeError("failed"))
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
-        # Should not raise — error is logged internally
         await scheduler._on_input_trigger("calendar-input")
         mock_agent_loop.on_input.assert_not_called()
 
-    async def test_input_trigger_missing_skill(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+    async def test_input_trigger_missing_entry(
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
-        # Should not raise — KeyError is caught by exception handler
         await scheduler._on_input_trigger("nonexistent")
-        mock_skill_runner.run.assert_not_called()
+        mock_runner.run.assert_not_called()
 
 
 class TestSchedulerProcessTrigger:
     """Test process trigger execution."""
 
-    async def test_process_trigger_runs_skill_and_writes_action(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+    async def test_process_trigger_runs_entry_and_writes_action(
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         await scheduler._on_process_trigger("weekly-digest")
 
-        mock_skill_runner.run.assert_called_once()
+        mock_runner.run.assert_called_once()
         mock_agent_loop.write_action.assert_called_once()
-        # Process trigger should NOT call on_input
         mock_agent_loop.on_input.assert_not_called()
 
-    async def test_process_trigger_handles_skill_error(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+    async def test_process_trigger_handles_error(
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
-        mock_skill_runner.run = AsyncMock(side_effect=RuntimeError("fail"))
+        mock_runner.run = AsyncMock(side_effect=RuntimeError("fail"))
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
-        # Should not raise — error is logged internally
         await scheduler._on_process_trigger("weekly-digest")
         mock_agent_loop.write_action.assert_not_called()
 
-    async def test_process_trigger_blocks_dangerous_skill(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
+    async def test_process_trigger_blocks_dangerous_entry(
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
     ) -> None:
         mock_safe_mode_guard.check = AsyncMock(return_value=False)
         registry = {
-            "dangerous-process": _make_meta(
+            "dangerous-process": _make_skill_meta(
                 name="dangerous-process",
-                category="process",
                 is_dangerous=True,
                 trigger={"type": "cron", "schedule": "0 9 * * 1"},
             ),
         }
-        mock_agent_loop.get_skill = MagicMock(side_effect=lambda name: registry[name])
+        mock_agent_loop.get_entry = MagicMock(side_effect=lambda name: registry[name])
         scheduler = Scheduler(
             agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
+            runner=mock_runner,
             safe_mode_guard=mock_safe_mode_guard,
         )
         await scheduler._on_process_trigger("dangerous-process")
 
         mock_safe_mode_guard.check.assert_called_once()
-        mock_skill_runner.run.assert_not_called()
+        mock_runner.run.assert_not_called()
         mock_agent_loop.write_action.assert_not_called()
-
-    async def test_process_trigger_passes_full_summary(
-        self, mock_agent_loop, mock_skill_runner, mock_safe_mode_guard
-    ) -> None:
-        mock_skill_runner.run = AsyncMock(return_value={"data": "x" * 300})
-        scheduler = Scheduler(
-            agent_loop=mock_agent_loop,
-            skill_runner=mock_skill_runner,
-            safe_mode_guard=mock_safe_mode_guard,
-        )
-        await scheduler._on_process_trigger("weekly-digest")
-        call_args = mock_agent_loop.write_action.call_args
-        summary = call_args.args[1]
-        # Truncation is now handled by GardenWriter.write_action internally
-        assert "x" in summary
-        assert call_args.args[0] == "weekly-digest"

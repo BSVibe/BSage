@@ -275,4 +275,3 @@ class TestChatWithTools:
 
         call_kwargs = mock_litellm.acompletion.call_args.kwargs
         assert call_kwargs["tools"] == tools
-

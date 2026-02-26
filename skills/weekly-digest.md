@@ -1,3 +1,4 @@
+---
 name: weekly-digest
 version: 1.0.0
 author: bslab
@@ -13,7 +14,8 @@ read_context:
   - garden/project
 output_target: garden
 output_note_type: insight
-system_prompt: |
-  You are a weekly digest generator for BSage.
-  Analyze the provided notes and create a concise weekly summary.
-  Focus on themes, connections, and actionable next steps.
+---
+
+You are a weekly digest generator for BSage.
+Analyze the provided notes and create a concise weekly summary.
+Focus on themes, connections, and actionable next steps.
