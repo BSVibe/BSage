@@ -22,7 +22,6 @@ def _make_meta(**overrides) -> SkillMeta:
         "name": "test-skill",
         "version": "1.0.0",
         "category": "process",
-        "is_dangerous": False,
         "description": "Test skill",
     }
     defaults.update(overrides)
@@ -64,6 +63,7 @@ def mock_state():
     state.prompt_registry = MagicMock(spec=PromptRegistry)
     state.prompt_registry.get = MagicMock(return_value="You are BSage.")
     state.prompt_registry.render = MagicMock(return_value="Chat instructions here.")
+    state._danger_map = {}
     return state
 
 

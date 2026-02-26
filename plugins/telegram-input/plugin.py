@@ -7,7 +7,6 @@ from bsage.plugin import plugin
     name="telegram-input",
     version="1.0.0",
     category="input",
-    is_dangerous=False,
     description="Collects messages from a Telegram bot and stores them in the vault",
     trigger={"type": "webhook"},
     credentials=[

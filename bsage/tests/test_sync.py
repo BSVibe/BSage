@@ -140,7 +140,6 @@ def _make_skill_meta(name: str) -> SkillMeta:
         name=name,
         version="1.0.0",
         category="output",
-        is_dangerous=False,
         description=f"Test output skill {name}",
     )
 
@@ -191,7 +190,6 @@ class TestSyncManagerOutputSkills:
             name="wrong-category",
             version="1.0.0",
             category="process",
-            is_dangerous=False,
             description="Not an output skill",
         )
         runner = MagicMock()

@@ -17,7 +17,6 @@ class _FakeSkillMeta:
     name: str
     description: str
     category: str
-    is_dangerous: bool
 
 
 def _make_config(safe_mode: bool = True) -> RuntimeConfig:
@@ -55,7 +54,6 @@ class TestSafeModeGuard:
             name="garden-writer",
             description="Write garden notes",
             category="process",
-            is_dangerous=False,
         )
 
         result = await guard.check(skill)
@@ -66,12 +64,15 @@ class TestSafeModeGuard:
         mock_interface = AsyncMock()
         mock_interface.request_approval = AsyncMock(return_value=True)
 
-        guard = SafeModeGuard(runtime_config=_make_config(True), interface=mock_interface)
+        guard = SafeModeGuard(
+            runtime_config=_make_config(True),
+            interface=mock_interface,
+            danger_fn=lambda name: name == "email-sender",
+        )
         skill = _FakeSkillMeta(
             name="email-sender",
             description="Send emails",
             category="output",
-            is_dangerous=True,
         )
 
         result = await guard.check(skill)
@@ -82,12 +83,15 @@ class TestSafeModeGuard:
         mock_interface = AsyncMock()
         mock_interface.request_approval = AsyncMock(return_value=False)
 
-        guard = SafeModeGuard(runtime_config=_make_config(True), interface=mock_interface)
+        guard = SafeModeGuard(
+            runtime_config=_make_config(True),
+            interface=mock_interface,
+            danger_fn=lambda name: name == "email-sender",
+        )
         skill = _FakeSkillMeta(
             name="email-sender",
             description="Send emails",
             category="output",
-            is_dangerous=True,
         )
 
         result = await guard.check(skill)
@@ -98,15 +102,18 @@ class TestSafeModeGuard:
         mock_interface = AsyncMock()
         mock_interface.request_approval = AsyncMock(return_value=False)
 
-        guard = SafeModeGuard(runtime_config=_make_config(False), interface=mock_interface)
-        dangerous_skill = _FakeSkillMeta(
+        guard = SafeModeGuard(
+            runtime_config=_make_config(False),
+            interface=mock_interface,
+            danger_fn=lambda name: True,  # everything would be "dangerous"
+        )
+        skill = _FakeSkillMeta(
             name="email-sender",
             description="Send emails",
             category="output",
-            is_dangerous=True,
         )
 
-        result = await guard.check(dangerous_skill)
+        result = await guard.check(skill)
         assert result is True
         mock_interface.request_approval.assert_not_called()
 
@@ -114,12 +121,15 @@ class TestSafeModeGuard:
         mock_interface = AsyncMock()
         mock_interface.request_approval = AsyncMock(return_value=True)
 
-        guard = SafeModeGuard(runtime_config=_make_config(True), interface=mock_interface)
+        guard = SafeModeGuard(
+            runtime_config=_make_config(True),
+            interface=mock_interface,
+            danger_fn=lambda name: name == "telegram-sender",
+        )
         skill = _FakeSkillMeta(
             name="telegram-sender",
             description="Send Telegram messages",
             category="output",
-            is_dangerous=True,
         )
 
         await guard.check(skill)
@@ -130,12 +140,15 @@ class TestSafeModeGuard:
         assert request.description == "Send Telegram messages"
 
     async def test_check_with_none_interface_and_dangerous_skill(self) -> None:
-        guard = SafeModeGuard(runtime_config=_make_config(True), interface=None)
+        guard = SafeModeGuard(
+            runtime_config=_make_config(True),
+            interface=None,
+            danger_fn=lambda name: name == "email-sender",
+        )
         skill = _FakeSkillMeta(
             name="email-sender",
             description="Send emails",
             category="output",
-            is_dangerous=True,
         )
 
         with pytest.raises(SafeModeError):
@@ -144,20 +157,39 @@ class TestSafeModeGuard:
     async def test_runtime_toggle_safe_mode(self) -> None:
         """Changing safe_mode at runtime should take effect immediately."""
         config = _make_config(True)
-        guard = SafeModeGuard(runtime_config=config, interface=None)
+        guard = SafeModeGuard(
+            runtime_config=config,
+            interface=None,
+            danger_fn=lambda name: name == "email-sender",
+        )
 
-        safe_skill = _FakeSkillMeta(
+        skill = _FakeSkillMeta(
             name="email-sender",
             description="Send emails",
             category="output",
-            is_dangerous=True,
         )
 
         # safe_mode=True, no interface → raises
         with pytest.raises(SafeModeError):
-            await guard.check(safe_skill)
+            await guard.check(skill)
 
         # Disable safe_mode at runtime → passes
         config.update(safe_mode=False)
-        result = await guard.check(safe_skill)
+        result = await guard.check(skill)
         assert result is True
+
+    async def test_no_danger_fn_all_skills_pass(self) -> None:
+        """Without danger_fn, nothing is considered dangerous."""
+        mock_interface = AsyncMock()
+        mock_interface.request_approval = AsyncMock(return_value=False)
+
+        guard = SafeModeGuard(runtime_config=_make_config(True), interface=mock_interface)
+        skill = _FakeSkillMeta(
+            name="any-skill",
+            description="Some skill",
+            category="process",
+        )
+
+        result = await guard.check(skill)
+        assert result is True
+        mock_interface.request_approval.assert_not_called()

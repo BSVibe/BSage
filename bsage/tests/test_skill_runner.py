@@ -15,7 +15,6 @@ def _make_meta(**overrides) -> SkillMeta:
         "name": "test-skill",
         "version": "1.0.0",
         "category": "process",
-        "is_dangerous": False,
         "description": "Test skill",
     }
     defaults.update(overrides)

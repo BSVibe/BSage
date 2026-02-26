@@ -14,7 +14,7 @@ from bsage.core.exceptions import SkillLoadError
 
 logger = structlog.get_logger(__name__)
 
-_REQUIRED_FIELDS = {"name", "version", "category", "is_dangerous", "description"}
+_REQUIRED_FIELDS = {"name", "version", "category", "description"}
 _VALID_CATEGORIES = {"input", "process", "output"}
 
 
@@ -62,7 +62,6 @@ class SkillMeta:
     name: str
     version: str
     category: str  # input | process | output
-    is_dangerous: bool
     description: str
     author: str = ""
     trigger: dict | None = None
@@ -169,6 +168,10 @@ class SkillLoader:
 
         known_fields = {f for f in SkillMeta.__dataclass_fields__}
         filtered = {k: v for k, v in data.items() if k in known_fields}
+
+        # is_dangerous is always False for YAML-only skills (structural guarantee).
+        # Ignore any author-declared value.
+        filtered.pop("is_dangerous", None)
 
         # Markdown body becomes the system prompt (overrides inline system_prompt if both present)
         body_stripped = body.strip()

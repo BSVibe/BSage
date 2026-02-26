@@ -14,13 +14,11 @@ class TestPluginMeta:
             name="test-plugin",
             version="1.0.0",
             category="input",
-            is_dangerous=False,
             description="A test plugin",
         )
         assert meta.name == "test-plugin"
         assert meta.version == "1.0.0"
         assert meta.category == "input"
-        assert meta.is_dangerous is False
         assert meta.description == "A test plugin"
 
     def test_optional_fields_defaults(self) -> None:
@@ -28,7 +26,6 @@ class TestPluginMeta:
             name="test",
             version="1.0.0",
             category="input",
-            is_dangerous=False,
             description="Test",
         )
         assert meta.author == ""
@@ -46,7 +43,6 @@ class TestPluginMeta:
             name="test",
             version="1.0.0",
             category="input",
-            is_dangerous=False,
             description="Test",
         )
         meta._execute_fn = my_fn
@@ -69,7 +65,7 @@ class TestPluginLoader:
             "    name='telegram-input',\n"
             "    version='1.0.0',\n"
             "    category='input',\n"
-            "    is_dangerous=False,\n"
+            ""
             "    description='Telegram bot input',\n"
             "    trigger={'type': 'webhook'},\n"
             ")\n"
@@ -89,7 +85,6 @@ class TestPluginLoader:
         meta = registry["telegram-input"]
         assert isinstance(meta, PluginMeta)
         assert meta.category == "input"
-        assert meta.is_dangerous is False
         assert meta.trigger == {"type": "webhook"}
 
     async def test_load_all_stores_execute_fn(self, plugins_dir) -> None:
@@ -109,7 +104,7 @@ class TestPluginLoader:
             "    name='with-notify',\n"
             "    version='1.0.0',\n"
             "    category='input',\n"
-            "    is_dangerous=False,\n"
+            ""
             "    description='Plugin with notify',\n"
             ")\n"
             "async def execute(context):\n"
@@ -188,7 +183,7 @@ class TestPluginLoader:
             "    name='bad-category',\n"
             "    version='1.0.0',\n"
             "    category='invalid',\n"
-            "    is_dangerous=False,\n"
+            ""
             "    description='Bad category',\n"
             ")\n"
             "async def execute(context):\n"
@@ -213,7 +208,6 @@ class TestPluginLoader:
         registry = await loader.load_all()
         meta = registry["minimal"]
         assert meta.version == "0.1.0"
-        assert meta.is_dangerous is False
         assert meta.description == ""
 
     async def test_load_all_description_falls_back_to_docstring(self, tmp_path) -> None:
@@ -243,7 +237,7 @@ class TestPluginLoader:
                 f"    name='{name}',\n"
                 f"    version='1.0.0',\n"
                 f"    category='input',\n"
-                f"    is_dangerous=False,\n"
+                ""
                 f"    description='{name}',\n"
                 f")\n"
                 f"async def execute(context):\n"

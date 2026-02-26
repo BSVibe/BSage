@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -42,9 +43,11 @@ class SafeModeGuard:
         self,
         runtime_config: RuntimeConfig,
         interface: ApprovalInterface | None,
+        danger_fn: Callable[[str], bool] | None = None,
     ) -> None:
         self._config = runtime_config
         self._interface = interface
+        self._danger_fn: Callable[[str], bool] = danger_fn or (lambda _: False)
 
     async def check(self, skill_meta: Any) -> bool:
         """Return True if the skill is allowed to run.
@@ -58,7 +61,7 @@ class SafeModeGuard:
             logger.info("safe_mode_disabled", skill=skill_meta.name)
             return True
 
-        if not skill_meta.is_dangerous:
+        if not self._danger_fn(skill_meta.name):
             logger.debug("safe_mode_pass", skill=skill_meta.name, dangerous=False)
             return True
 

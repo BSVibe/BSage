@@ -7,6 +7,7 @@ import structlog
 from bsage.core.agent_loop import AgentLoop
 from bsage.core.config import Settings
 from bsage.core.credential_store import CredentialStore
+from bsage.core.danger_analyzer import DangerAnalyzer
 from bsage.core.llm import LiteLLMClient
 from bsage.core.plugin_loader import PluginLoader
 from bsage.core.plugin_runner import PluginRunner
@@ -48,17 +49,38 @@ class AppState:
         # LLM (reads from RuntimeConfig per-call)
         self.llm_client = LiteLLMClient(runtime_config=self.runtime_config)
 
-        # SafeMode (reads from RuntimeConfig per-call)
+        # danger_map populated in initialize() after plugin load_all()
+        self._danger_map: dict[str, bool] = {}
+
+        # SafeMode — danger_fn reads _danger_map (closure; populated post-load)
         self.safe_mode_guard = SafeModeGuard(
             runtime_config=self.runtime_config,
             interface=None,
+            danger_fn=lambda name: self._danger_map.get(name, False),
         )
 
         # Prompts
         self.prompt_registry = PromptRegistry(settings.prompts_dir)
 
+        # DangerAnalyzer — auto-classifies plugins at load time
+        danger_cache_path = settings.tmp_dir / "danger_analysis.json"
+
+        async def _llm_fn(prompt: str) -> str:
+            return await self.llm_client.chat(
+                system="",
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+        self.danger_analyzer = DangerAnalyzer(
+            cache_path=danger_cache_path,
+            llm_fn=_llm_fn,
+        )
+
         # Plugins
-        self.plugin_loader = PluginLoader(settings.plugins_dir)
+        self.plugin_loader = PluginLoader(
+            settings.plugins_dir,
+            danger_analyzer=self.danger_analyzer,
+        )
         self.plugin_runner = PluginRunner(credential_store=self.credential_store)
 
         # Skills
@@ -79,6 +101,9 @@ class AppState:
         """Load plugins and skills, create AgentLoop, register triggers, start scheduler."""
         plugin_registry = await self.plugin_loader.load_all()
         skill_registry = await self.skill_loader.load_all()
+
+        # Populate danger_map from plugin analysis results
+        self._danger_map.update(self.plugin_loader.danger_map)
 
         # Merge into unified registry (plugins and skills share the same namespace)
         registry = {**plugin_registry, **skill_registry}

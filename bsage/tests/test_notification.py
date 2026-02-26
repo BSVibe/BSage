@@ -15,7 +15,6 @@ def _make_plugin_meta(**overrides) -> PluginMeta:
         "name": "telegram-input",
         "version": "1.0.0",
         "category": "input",
-        "is_dangerous": False,
         "description": "Receive and send messages via Telegram",
     }
     defaults.update(overrides)
@@ -72,7 +71,6 @@ class TestNotificationRouterSetup:
             name="weekly-digest",
             version="1.0.0",
             category="process",
-            is_dangerous=False,
             description="Weekly digest",
         )
         registry = {"weekly-digest": skill}

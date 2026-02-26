@@ -11,7 +11,6 @@ def plugin(
     name: str,
     category: str,
     version: str = "0.1.0",
-    is_dangerous: bool = False,
     description: str = "",
     author: str = "",
     trigger: dict[str, Any] | None = None,
@@ -37,6 +36,9 @@ def plugin(
     The decorator attaches a ``__plugin__`` dict to the function and adds
     a ``.notify`` helper for registering the bidirectional notification handler.
     If ``description`` is empty the function's docstring is used instead.
+
+    Note: ``is_dangerous`` is no longer declared by the author. It is
+    auto-computed by ``DangerAnalyzer`` at load time via static code analysis.
     """
 
     def decorator(fn: Callable) -> Callable:
@@ -44,7 +46,6 @@ def plugin(
             "name": name,
             "version": version,
             "category": category,
-            "is_dangerous": is_dangerous,
             "description": description or (fn.__doc__ or "").strip(),
             "author": author,
             "trigger": trigger,

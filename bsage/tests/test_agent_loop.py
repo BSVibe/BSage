@@ -14,7 +14,6 @@ def _make_plugin_meta(**overrides) -> PluginMeta:
         "name": "test-plugin",
         "version": "1.0.0",
         "category": "process",
-        "is_dangerous": False,
         "description": "Test plugin",
     }
     defaults.update(overrides)
@@ -26,7 +25,6 @@ def _make_skill_meta(**overrides) -> SkillMeta:
         "name": "test-skill",
         "version": "1.0.0",
         "category": "process",
-        "is_dangerous": False,
         "description": "Test skill",
     }
     defaults.update(overrides)
@@ -50,7 +48,6 @@ def mock_deps():
         "dangerous-plugin": _make_plugin_meta(
             name="dangerous-plugin",
             category="process",
-            is_dangerous=True,
             trigger={"type": "on_input"},
         ),
         "skill-builder": _make_skill_meta(
@@ -142,7 +139,10 @@ class TestAgentLoopOnInput:
         assert mock_deps["garden_writer"].write_action.call_count > 0
 
     async def test_safe_mode_blocks_dangerous_entry(self, mock_deps) -> None:
-        mock_deps["safe_mode_guard"].check = AsyncMock(side_effect=lambda m: not m.is_dangerous)
+        _dangerous = {"dangerous-plugin"}
+        mock_deps["safe_mode_guard"].check = AsyncMock(
+            side_effect=lambda m: m.name not in _dangerous
+        )
         loop = _make_loop(mock_deps)
         await loop.on_input("calendar-input", {"events": []})
         run_calls = mock_deps["runner"].run.call_args_list

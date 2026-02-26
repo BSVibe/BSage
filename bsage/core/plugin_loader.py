@@ -26,7 +26,6 @@ class PluginMeta:
     name: str
     version: str
     category: str  # input | process | output
-    is_dangerous: bool
     description: str
     author: str = ""
     trigger: dict[str, Any] | None = None
@@ -41,13 +40,20 @@ class PluginMeta:
 class PluginLoader:
     """Scans a plugins directory for plugin.py files decorated with @plugin."""
 
-    def __init__(self, plugins_dir: Path) -> None:
+    def __init__(
+        self,
+        plugins_dir: Path,
+        danger_analyzer: Any | None = None,
+    ) -> None:
         self._plugins_dir = plugins_dir
+        self._danger_analyzer = danger_analyzer
         self._registry: dict[str, PluginMeta] = {}
+        self.danger_map: dict[str, bool] = {}
 
     async def load_all(self) -> dict[str, PluginMeta]:
         """Scan plugins_dir and load all valid Plugin metadata into the registry."""
         self._registry.clear()
+        self.danger_map.clear()
 
         if not self._plugins_dir.is_dir():
             logger.warning("plugins_dir_missing", path=str(self._plugins_dir))
@@ -64,6 +70,20 @@ class PluginLoader:
 
             try:
                 meta = self._load_plugin(plugin_py)
+                if self._danger_analyzer is not None:
+                    code = plugin_py.read_text(encoding="utf-8")
+                    is_dangerous, reason = await self._danger_analyzer.analyze(
+                        meta.name, code, meta.description
+                    )
+                    self.danger_map[meta.name] = is_dangerous
+                    logger.info(
+                        "plugin_danger_assessed",
+                        name=meta.name,
+                        is_dangerous=is_dangerous,
+                        reason=reason,
+                    )
+                else:
+                    self.danger_map[meta.name] = False
                 self._registry[meta.name] = meta
                 logger.info("plugin_loaded", name=meta.name, category=meta.category)
             except Exception as exc:
@@ -122,7 +142,6 @@ class PluginLoader:
             name=name,
             version=meta_dict.get("version", ""),
             category=category,
-            is_dangerous=bool(meta_dict.get("is_dangerous", False)),
             description=meta_dict.get("description", ""),
             author=meta_dict.get("author", ""),
             trigger=meta_dict.get("trigger"),

@@ -3,7 +3,6 @@ name: weekly-digest
 version: 1.0.0
 author: bslab
 category: process
-is_dangerous: false
 description: Generate a weekly digest report from recent garden notes using LLM
 trigger:
   type: cron

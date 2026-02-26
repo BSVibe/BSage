@@ -41,13 +41,11 @@ class TestSkillMeta:
             name="test",
             version="1.0.0",
             category="process",
-            is_dangerous=False,
             description="A test skill",
         )
         assert meta.name == "test"
         assert meta.version == "1.0.0"
         assert meta.category == "process"
-        assert meta.is_dangerous is False
         assert meta.description == "A test skill"
 
     def test_optional_fields_defaults(self) -> None:
@@ -55,7 +53,6 @@ class TestSkillMeta:
             name="test",
             version="1.0.0",
             category="process",
-            is_dangerous=False,
             description="A test skill",
         )
         assert meta.author == ""
@@ -72,7 +69,6 @@ class TestSkillMeta:
             name="weekly-digest",
             version="1.0.0",
             category="process",
-            is_dangerous=False,
             description="Weekly digest",
             read_context=["garden/idea", "garden/insight"],
             output_target=OutputTarget.GARDEN,
@@ -98,7 +94,6 @@ class TestSkillLoader:
             "name: weekly-digest\n"
             "version: 1.0.0\n"
             "category: process\n"
-            "is_dangerous: false\n"
             "description: Generate weekly digest\n"
             "trigger:\n"
             "  type: cron\n"
@@ -112,7 +107,6 @@ class TestSkillLoader:
             "name: insight-linker\n"
             "version: 1.0.0\n"
             "category: process\n"
-            "is_dangerous: false\n"
             "description: Link insights across notes\n"
             "---\n"
             "\n"
@@ -133,7 +127,6 @@ class TestSkillLoader:
         meta = registry["weekly-digest"]
         assert isinstance(meta, SkillMeta)
         assert meta.category == "process"
-        assert meta.is_dangerous is False
 
     async def test_md_body_becomes_system_prompt(self, skills_dir) -> None:
         loader = SkillLoader(skills_dir)
@@ -186,7 +179,7 @@ class TestSkillLoader:
             "name: Bad_Name!\n"
             "version: 1.0.0\n"
             "category: process\n"
-            "is_dangerous: false\n"
+            ""
             "description: Invalid name\n"
             "---\n"
         )
@@ -200,7 +193,7 @@ class TestSkillLoader:
             "name: meta-skill\n"
             "version: 1.0.0\n"
             "category: meta\n"
-            "is_dangerous: false\n"
+            ""
             "description: Old meta category\n"
             "---\n"
         )
@@ -214,7 +207,7 @@ class TestSkillLoader:
             "name: weekly-digest\n"
             "version: 1.0.0\n"
             "category: process\n"
-            "is_dangerous: false\n"
+            ""
             "description: Weekly digest\n"
             "read_context:\n"
             "  - garden/idea\n"
@@ -241,7 +234,7 @@ class TestSkillLoader:
             "name: bad-target\n"
             "version: 1.0.0\n"
             "category: process\n"
-            "is_dangerous: false\n"
+            ""
             "description: Invalid output target\n"
             "output_target: invalid\n"
             "---\n"

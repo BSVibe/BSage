@@ -14,7 +14,6 @@ def _make_plugin_meta(**overrides) -> PluginMeta:
         "name": "test-plugin",
         "version": "1.0.0",
         "category": "process",
-        "is_dangerous": False,
         "description": "Test plugin",
     }
     defaults.update(overrides)

@@ -35,13 +35,13 @@ class ConfigUpdate(BaseModel):
     safe_mode: bool | None = None
 
 
-def _meta_to_dict(meta: Any) -> dict[str, Any]:
+def _meta_to_dict(meta: Any, danger_map: dict[str, bool] | None = None) -> dict[str, Any]:
     """Serialize a PluginMeta or SkillMeta to a JSON-safe dict."""
     return {
         "name": meta.name,
         "version": meta.version,
         "category": meta.category,
-        "is_dangerous": meta.is_dangerous,
+        "is_dangerous": (danger_map or {}).get(meta.name, False),
         "description": meta.description,
     }
 
@@ -58,13 +58,13 @@ def create_routes(state: AppState) -> APIRouter:
     async def list_plugins() -> list[dict[str, Any]]:
         """List all loaded Plugins (code-based)."""
         registry = await state.plugin_loader.load_all()
-        return [_meta_to_dict(meta) for meta in registry.values()]
+        return [_meta_to_dict(meta, state._danger_map) for meta in registry.values()]
 
     @api_router.get("/skills")
     async def list_skills() -> list[dict[str, Any]]:
         """List all loaded Skills (LLM-based)."""
         registry = await state.skill_loader.load_all()
-        return [_meta_to_dict(meta) for meta in registry.values()]
+        return [_meta_to_dict(meta, state._danger_map) for meta in registry.values()]
 
     @api_router.post("/plugins/{name}/run")
     async def run_plugin(name: str) -> dict[str, Any]:

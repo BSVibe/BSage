@@ -15,7 +15,6 @@ def _make_plugin_meta(**overrides) -> PluginMeta:
         "name": "test-plugin",
         "version": "1.0.0",
         "category": "input",
-        "is_dangerous": False,
         "description": "Test plugin",
     }
     defaults.update(overrides)
@@ -27,7 +26,6 @@ def _make_skill_meta(**overrides) -> SkillMeta:
         "name": "test-skill",
         "version": "1.0.0",
         "category": "process",
-        "is_dangerous": False,
         "description": "Test skill",
     }
     defaults.update(overrides)
@@ -328,7 +326,6 @@ class TestSchedulerProcessTrigger:
         registry = {
             "dangerous-process": _make_skill_meta(
                 name="dangerous-process",
-                is_dangerous=True,
                 trigger={"type": "cron", "schedule": "0 9 * * 1"},
             ),
         }
