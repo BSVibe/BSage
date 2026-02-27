@@ -1,185 +1,152 @@
 # Skill System Rules
 
-## CRITICAL: Skill 설계 및 구현 규칙
+## CRITICAL: Plugin vs Skill Dual Architecture
 
-### 1. Skill 포맷
+BSage distinguishes two types of execution units.
 
-**모든 Skill은 `skills/` 디렉토리에 독립 폴더로 존재한다.**
+| | Plugin | Skill |
+|---|---|---|
+| Location | `plugins/name/plugin.py` | `skills/name.md` |
+| Declaration | `@plugin` decorator | YAML frontmatter |
+| Execution | Python code runs directly | GATHER → LLM → APPLY pipeline |
+| External calls | Yes | No — Vault + LLM only |
+| `is_dangerous` | Auto-detected by DangerAnalyzer | None — structurally always safe |
+| Notification | `@execute.notify` | N/A |
+
+---
+
+## 1. Plugin Format (`plugins/`)
+
+**Use Plugin when you need code execution, external API calls, or bidirectional notifications.**
+
+```
+plugins/
+├── telegram-input/
+│   └── plugin.py      # @plugin decorator + execute() function
+├── calendar-input/
+│   └── plugin.py
+└── skill-builder/
+    └── plugin.py
+```
+
+### plugin.py Format
+
+```python
+from bsage.plugin import plugin
+
+@plugin(
+    name="telegram-input",           # lowercase + hyphens (^[a-z][a-z0-9-]*$)
+    version="1.0.0",                 # semver
+    category="input",               # input | process | output
+    description="Collect Telegram messages and store as seeds.",
+    trigger={"type": "webhook"},
+    credentials=[
+        {"name": "bot_token", "description": "Telegram Bot API token", "required": True},
+        {"name": "chat_id",   "description": "Chat ID to monitor",     "required": True},
+    ],
+)
+async def execute(context) -> dict:
+    """Inbound: Telegram → Vault."""
+    creds = context.credentials
+    messages = await fetch_telegram(creds["bot_token"])
+    await context.garden.write_seed("telegram", {"messages": messages})
+    return {"collected": len(messages)}
+
+@execute.notify  # Optional — register a bidirectional notification handler
+async def notify(context) -> dict:
+    """Outbound: Vault → Telegram (reverse direction)."""
+    creds = context.credentials
+    msg = context.input_data["message"]
+    await send_telegram(creds["bot_token"], creds["chat_id"], msg)
+    return {"sent": True}
+```
+
+**Rules:**
+- Only `bsage.plugin` may be imported from the `bsage` package — no other internal imports
+- External service connections are handled entirely inside the Plugin
+- Entry point is always `execute(context)` (async)
+- Register a notification handler with `@execute.notify` (bidirectional channels only)
+
+### is_dangerous — Auto-Detection
+
+**Do not declare `is_dangerous` manually. `DangerAnalyzer` determines it automatically.**
+
+```
+At plugin load time → AST static analysis
+  Detects dangerous module imports:
+    httpx, requests, aiohttp, urllib,
+    socket, subprocess, telegram,
+    smtplib, boto3, etc.
+  → is_dangerous = True (automatic)
+```
+
+- Cache is invalidated by content hash when plugin code changes → re-analyzed
+- Falls back to LLM judgment when AST parsing fails
+- Defaults to dangerous (True) when classification is uncertain
+
+---
+
+## 2. Skill Format (`skills/`)
+
+**Use Skill for analysis, transformation, or summarization that only requires LLM and Vault access.**
 
 ```
 skills/
-├── garden-writer/
-│   ├── skill.yaml      # 필수 — 메타데이터
-│   └── skill.py        # 선택 — 코드 실행 필요 시
-├── calendar-input/
-│   ├── skill.yaml
-│   └── skill.py
-└── weekly-digest/
-    └── skill.yaml      # yaml only — LLM 지시만으로 처리
+├── weekly-digest.md   # Single .md file — YAML frontmatter + Markdown body
+├── insight-linker.md
+└── unfinished-detector.md
 ```
 
-### 2. skill.yaml 포맷
+### *.md Format
 
-```yaml
-# 필수
-name: string                    # lowercase + hyphens (^[a-z][a-z0-9-]*$)
-version: string                 # semver
-category: input | process | output
-is_dangerous: bool
-description: string             # LLM 판단에도 사용됨
+```markdown
+---
+# Required
+name: weekly-digest           # lowercase + hyphens (^[a-z][a-z0-9-]*$)
+version: 1.0.0                # semver
+category: process             # input | process | output
+description: "..."            # also used for LLM routing decisions
 
-# 선택
+# Optional — trigger
+trigger:
+  type: cron                  # cron | on_input | on_demand | write_event
+  schedule: "0 9 * * MON"    # when type is cron
+  sources: [telegram-input]   # when type is on_input (filter to specific plugins)
+  hint: "..."                 # when type is on_demand (guides LLM routing)
+
+# Optional — GATHER phase
+read_context:
+  - garden/idea
+  - garden/insight
+
+# Optional — APPLY phase
+output_target: garden         # garden | seeds
+output_note_type: insight     # garden note type (default: idea)
+output_format: json           # request JSON output from LLM
+
+# Optional
 author: string
-entrypoint: string              # "skill.py::execute" (없으면 YAML-only)
-notification_entrypoint: string # "skill.py::notify" (양방향 채널 시)
+---
 
-# Trigger — 각 skill이 자기 trigger 선언
-trigger:
-  type: cron | webhook | on_input | write_event | on_demand
-  schedule: string              # cron일 때
-  sources: list[string]         # on_input일 때 (특정 input만 필터)
-  hint: string                  # on_demand일 때 (LLM 가이드)
-
-# Credentials (초기 설정 시 사용)
-credentials:
-  setup_entrypoint: string      # 커스텀 설정 로직 (OAuth 등)
-  fields:                       # CLI 프롬프트 기반 설정
-    - name: string
-      description: string
-      required: bool
-
-# YAML-only 강화 (entrypoint 없을 때 사용)
-read_context: list[string]      # Vault 읽기 경로
-output_target: garden | seeds   # 결과 저장 위치
-output_note_type: string        # garden note type (default: idea)
-output_format: json             # JSON 출력 요청
-system_prompt: string           # LLM system prompt 오버라이드
+Write the LLM system prompt here as the Markdown body.
 ```
 
-**NEVER 누락해서는 안 되는 필드:**
-- `name`, `version`, `category`, `is_dangerous`, `description`
+**Required fields — NEVER omit:**
+- `name`, `version`, `category`, `description`
 
-### 3. 카테고리 정의
+**There is no `is_dangerous` field on Skills.** Markdown Skills can only access the LLM and Vault, so they are structurally always safe.
 
-| 카테고리 | 역할 | 트리거 예시 |
-|----------|------|------------|
-| **input** | 외부 데이터 수신 | cron, webhook |
-| **process** | 판단 + 행동 (분석, 변환, 메시지 발송 등) | on_input, cron, on_demand |
-| **output** | vault → 외부 기계적 동기화 | write_event |
+### YAML-Only Pipeline (GATHER → LLM → APPLY)
 
-- 세 카테고리는 **독립적** — input → process → output 순차 파이프라인이 아님
-- Process는 input 없이도 독립 실행 가능 (cron, on_demand)
+1. **GATHER**: Reads Vault notes from `read_context` paths to build context (max 20 notes/dir, 50,000 chars)
+2. **LLM**: Calls LLM with the Markdown body as system prompt + vault context + input_data
+3. **APPLY**: Saves result to Vault based on `output_target`
 
-### 4. Trigger 시스템
-
-**각 Skill은 자기 trigger를 선언한다. 직접 의존(rules) 없음.**
-
-| type | 대상 | 동작 |
-|------|------|------|
-| `cron` | input, process | 스케줄 기반 자동 실행 |
-| `webhook` | input | HTTP 요청 수신 시 실행 |
-| `on_input` | process | Input 결과 도착 시. `sources`로 필터 가능 |
-| `write_event` | output | Vault 쓰기 발생 시 자동 |
-| `on_demand` | process | LLM 판단 or 사용자 요청. `hint`로 가이드 |
-
-trigger 없는 process = `on_demand`로 간주 (LLM이 description 보고 판단).
-
-```yaml
-# 예시: 모든 input에 반응
-name: garden-writer
-category: process
-trigger:
-  type: on_input
-
-# 예시: 특정 input에만 반응
-name: insight-linker
-category: process
-trigger:
-  type: on_input
-  sources: [calendar-input]
-
-# 예시: process도 cron 가능
-name: weekly-digest
-category: process
-trigger:
-  type: cron
-  schedule: "0 9 * * MON"
-```
-
-### 5. skill.py 규칙
-
-**순수 Python. `bsage` 패키지 import 금지.**
-
-```python
-# Correct — Skill이 자체적으로 API 연결 처리
-async def execute(context):
-    creds = context.credentials
-    events = await fetch_calendar_events(creds)
-    await context.garden.write_seed("calendar", {"events": events})
-    return {"collected": len(events)}
-
-# Wrong — bsage import 사용
-from bsage.core.config import settings  # NO!
-```
-
-**규칙:**
-- 진입점: `execute(context)` 함수 고정 (async)
-- `context` 객체를 통해서만 외부 접근
-- 표준 라이브러리 + PyPI 패키지만 사용
-- `bsage` 내부 모듈 직접 import 금지
-- 외부 서비스 연결은 Skill이 자체적으로 처리
-
-### 6. SkillContext 인터페이스
-
-Skill은 `context` 객체를 통해서만 Core Engine과 소통한다.
-
-```python
-# context가 제공하는 인터페이스
-context.credentials                 # dict[str, Any] — 자동 주입된 credential
-context.garden.write_seed(...)      # seeds/ 쓰기
-context.garden.write_garden(...)    # garden/ 쓰기
-context.garden.write_action(...)    # actions/ 로그
-context.garden.read_notes(...)      # 기존 노트 읽기
-context.llm.chat(...)               # LLM API 호출
-context.config                      # Skill 설정값
-context.logger                      # structlog 로거
-context.input_data                  # 입력 데이터 (on_input 시)
-context.notify                      # NotificationInterface (유저 알림)
-```
-
-### 7. Credential 시스템
-
-**credential name = skill name** 컨벤션.
-
-```yaml
-# skill.yaml에 선언
-credentials:
-  fields:
-    - name: bot_token
-      description: "Telegram Bot API token"
-      required: true
-```
-
-- `bsage setup <skill-name>` CLI로 초기 설정
-- 실행 시 `context.credentials`에 자동 주입 (SkillRunner가 CredentialStore에서 resolve)
-- `.credentials/` 디렉토리에 JSON으로 저장 (gitignored)
-
-### 8. YAML-Only Skill (선언적 파이프라인)
-
-entrypoint 없는 process skill은 3단계 파이프라인으로 실행:
-
-**GATHER → LLM → APPLY**
-
-1. **GATHER**: `read_context` 경로에서 Vault 노트를 읽어 컨텍스트 구성
-2. **LLM**: system prompt + vault context + input_data로 LLM 호출
-3. **APPLY**: `output_target`에 따라 결과를 Vault에 저장
-
-```yaml
-# 예시: weekly-digest (YAML-only)
+```markdown
+---
 name: weekly-digest
 version: 1.0.0
 category: process
-is_dangerous: false
 description: Generate a weekly digest from recent garden notes
 trigger:
   type: cron
@@ -190,98 +157,133 @@ read_context:
 output_target: garden
 output_note_type: insight
 output_format: json
-system_prompt: |
-  Analyze the provided notes and create a weekly summary.
+---
+
+Analyze the provided notes and create a structured weekly summary.
+Focus on recurring themes, unfinished items, and key insights.
 ```
 
-- `system_prompt` 오버라이드해도 vault 데이터는 항상 user message로 주입됨
-- `output_format: json` → LLM에 JSON 출력 지시 + 자동 파싱
+---
 
-### 9. context.notify — 유저 알림 (양방향 채널)
+## 3. Category Definitions
 
-Process skill이 유저에게 알림 보낼 때 직접 메신저 API 호출하지 않는다.
-`context.notify.send()` 사용 — `NotificationRouter`가 채널을 자동 선택.
+| Category | Role | Trigger examples |
+|---|---|---|
+| **input** | Receive external data → write to Vault seeds | cron, webhook |
+| **process** | Judgment + action (analysis, transformation, sending messages, etc.) | on_input, cron, on_demand |
+| **output** | Vault → external mechanical sync | write_event |
 
-**알림 채널 = input skill의 역방향.** 별도 output skill 불필요.
+- The three categories are **independent** — not a sequential pipeline
+- Process can run independently without input (cron, on_demand)
+- **There is no `meta` category.** Meta functionality (e.g. SkillBuilder) is implemented as a `process` Plugin
+
+---
+
+## 4. Trigger System
+
+| Type | Target | Behavior |
+|---|---|---|
+| `cron` | input, process | Schedule-based automatic execution |
+| `webhook` | input Plugin | Triggered by `POST /api/webhooks/{name}` HTTP request |
+| `on_input` | process | Triggered when an input Plugin result arrives. Filterable by `sources` |
+| `write_event` | output | Triggered automatically on any Vault write |
+| `on_demand` | process | LLM judgment or user request. `hint` guides routing |
+
+A process entry without a trigger is treated as `on_demand` — the LLM routes it based on `description`.
 
 ```yaml
-# skills/telegram-input/skill.yaml
-name: telegram-input
-category: input
+# React to all inputs
+trigger:
+  type: on_input
+
+# React to a specific input plugin only
+trigger:
+  type: on_input
+  sources: [calendar-input]
+
+# Scheduled process
+trigger:
+  type: cron
+  schedule: "0 9 * * MON"
+
+# Webhook-triggered input
 trigger:
   type: webhook
-entrypoint: skill.py::execute              # 수신 (input)
-notification_entrypoint: skill.py::notify  # 발신 (역방향)
-credentials:
-  fields:
-    - name: bot_token
-    - name: chat_id
+# → Gateway receives it at POST /api/webhooks/{name}
 ```
+
+---
+
+## 5. SkillContext Interface
+
+Both Plugins and Skills communicate with the Core Engine only through the `context` object.
 
 ```python
-# skills/telegram-input/skill.py
-
-async def execute(context):
-    """수신: Telegram → Vault (input 방향)."""
-    creds = context.credentials
-    messages = await poll_telegram(creds)
-    await context.garden.write_seed("telegram", {"messages": messages})
-    return {"collected": len(messages)}
-
-async def notify(context):
-    """발신: Vault → Telegram (역방향)."""
-    creds = context.credentials
-    msg = context.input_data["message"]
-    await send_telegram_message(creds["bot_token"], creds["chat_id"], msg)
-    return {"sent": True}
+context.credentials               # dict[str, Any] — auto-injected credentials
+context.garden.write_seed(...)    # write to seeds/
+context.garden.write_garden(...)  # write to garden/
+context.garden.write_action(...)  # write to actions/ log
+context.garden.read_notes(...)    # read existing notes
+context.llm.chat(...)             # call the LLM
+context.config                    # configuration values
+context.logger                    # structlog logger
+context.input_data                # input payload (when triggered by on_input)
+context.notify                    # NotificationInterface — may be None
 ```
 
-**흐름:**
+---
+
+## 6. Credential System
+
+**Convention: credential name = plugin/skill name.**
+
+```python
+# Declare credentials in plugin.py
+@plugin(
+    credentials=[
+        {"name": "bot_token", "description": "Telegram Bot token", "required": True},
+    ]
+)
+```
+
+- Run `bsage setup <name>` CLI to configure credentials (supports both Plugins and Skills)
+- Credentials are auto-injected into `context.credentials` at runtime (PluginRunner resolves from CredentialStore)
+- Stored as JSON in the `.credentials/` directory (gitignored)
+
+---
+
+## 7. context.notify — User Notifications (Bidirectional Channel)
+
+Process Plugins/Skills must not call messenger APIs directly. Use `context.notify.send()` — `NotificationRouter` selects the channel automatically.
+
+**Notification channel = reverse direction of an input Plugin.** Registered via `@execute.notify` and auto-discovered.
+
+```python
+# In a process plugin or skill
+async def execute(context):
+    if context.notify:  # may be None when no channel is available
+        await context.notify.send("Project 'X' has been stalled for 12 days")
+```
+
 ```
 context.notify.send("msg")
   → NotificationRouter.send()
-  → registry에서 notification_entrypoint 있는 skill 자동 발견
-  → skill_runner.run_notify(meta, ctx) — skill.py::notify 실행
+  → auto-discovers Plugins with _notify_fn in registry
+  → runner.run_notify(meta, ctx)
+  → ctx.notify = None (prevents recursion)
 ```
 
-- `NotificationRouter.setup(registry, ...)` 시 자동 발견 — 별도 등록 불필요
-- 같은 credential 재사용 (같은 bot_token으로 수신 + 발신)
-- 알림 skill의 `context.notify = None` (재귀 방지)
+---
 
-**process skill에서 사용:**
-```python
-async def execute(context):
-    if context.notify:
-        await context.notify.send("프로젝트 'X'가 12일째 방치됨")
-```
+## 8. GardenWriter Write Rules
 
-### 10. is_dangerous 규칙
-
-**외부 세계에 부작용을 발생시키는 Skill은 반드시 `is_dangerous: true`.**
-
-```yaml
-# Dangerous — 외부에 영향
-calendar-writer:    is_dangerous: true   # 캘린더 일정 등록
-email-sender:       is_dangerous: true   # 이메일 발송
-telegram-sender:    is_dangerous: true   # 메시지 발송
-
-# Safe — Vault 내부 작업만
-garden-writer:      is_dangerous: false  # 마크다운 정리
-insight-linker:     is_dangerous: false  # 노트 연결 발견
-weekly-digest:      is_dangerous: false  # 리포트 생성
-```
-
-**SafeModeGuard가 `is_dangerous: true` Skill 실행 전 반드시 사용자 승인을 요청한다.**
-
-### 11. GardenWriter 쓰기 규칙
-
-| 디렉토리 | 누가 쓰는가 | 내용 |
+| Directory | Written by | Content |
 |---|---|---|
-| `seeds/` | InputSkill 실행 후 | 원시 수집 데이터 |
-| `garden/` | ProcessSkill 실행 후 | 정리된 지식 노트 |
-| `actions/` | 모든 Skill 실행 후 | 에이전트 행동 로그 |
+| `seeds/` | After input Plugin execution | Raw collected data |
+| `garden/` | After process Plugin/Skill execution | Processed knowledge notes |
+| `actions/` | After any Plugin/Skill execution | Agent action log |
 
-**ALWAYS use frontmatter:**
+**Always use frontmatter:**
 ```markdown
 ---
 type: idea
@@ -292,15 +294,29 @@ related: [[BSage]]
 ---
 ```
 
+**GardenWriter is built into the core** — no separate skill or plugin needed.
+`AgentLoop.on_input()` automatically converts the `items` field from a Plugin result into garden notes.
+
+---
+
 ## Verification Checklist
 
-Skill 구현 전:
-- [ ] skill.yaml에 필수 필드 모두 존재
-- [ ] category: input / process / output 중 하나
-- [ ] trigger 적절히 설정
-- [ ] is_dangerous 적절히 설정
-- [ ] skill.py에서 bsage import 없음
-- [ ] execute(context) 진입점 사용
-- [ ] 외부 서비스는 Skill 내부에서 자체 처리
-- [ ] GardenWriter로 적절한 디렉토리에 쓰기
-- [ ] 테스트에서 context mock 사용
+### Before implementing a Plugin:
+- [ ] File located at `plugins/{name}/plugin.py`
+- [ ] `@plugin` decorator has required fields: name, version, category, description
+- [ ] category is one of: input / process / output (no meta)
+- [ ] trigger is set appropriately
+- [ ] No `bsage` imports other than `bsage.plugin`
+- [ ] Entry point is `execute(context)` (async)
+- [ ] External services are handled entirely inside the Plugin
+- [ ] `context.notify` is checked for None before use
+- [ ] Tests use mocked context
+
+### Before implementing a Skill:
+- [ ] File located at `skills/{name}.md` (single file)
+- [ ] YAML frontmatter has required fields: name, version, category, description
+- [ ] category is one of: input / process / output
+- [ ] No `is_dangerous` field (Skills do not have one)
+- [ ] trigger is set appropriately
+- [ ] read_context and output_target are configured appropriately
+- [ ] Markdown body contains the system prompt

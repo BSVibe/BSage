@@ -253,21 +253,22 @@ class TestAgentLoopChat:
         call_kwargs = mock_deps["llm_client"].chat.call_args.kwargs
         assert call_kwargs["tools"] is not None
 
-    async def test_chat_falls_back_to_plain_when_no_tools(self, mock_deps) -> None:
-        # Remove all input_schema from registry (PluginMeta only)
+    async def test_chat_always_has_write_note_tool(self, mock_deps) -> None:
+        # Even with no plugin input_schema, write-note is always available
         for meta in mock_deps["registry"].values():
             if isinstance(meta, PluginMeta):
                 meta.input_schema = None
-        mock_deps["llm_client"].chat = AsyncMock(return_value="Plain response")
+        mock_deps["llm_client"].chat = AsyncMock(return_value="Response")
         loop = _make_loop(mock_deps)
         result = await loop.chat(
             system="You are BSage",
             messages=[{"role": "user", "content": "Hello"}],
         )
-        assert result == "Plain response"
+        assert result == "Response"
         call_kwargs = mock_deps["llm_client"].chat.call_args.kwargs
-        assert call_kwargs["tools"] is None
-        assert call_kwargs["tool_handler"] is None
+        tool_names = [t["function"]["name"] for t in call_kwargs["tools"]]
+        assert "write-note" in tool_names
+        assert call_kwargs["tool_handler"] is not None
 
     async def test_chat_passes_system_and_messages(self, mock_deps) -> None:
         mock_deps["llm_client"].chat = AsyncMock(return_value="ok")
@@ -279,32 +280,45 @@ class TestAgentLoopChat:
         assert call_kwargs["messages"] == msgs
 
 
-class TestBuildPluginTools:
-    """Test _build_plugin_tools tool definition generation."""
+class TestBuildTools:
+    """Test _build_tools tool definition generation."""
+
+    async def test_always_includes_write_note(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        tools = loop._build_tools()
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "write-note" in tool_names
+
+    async def test_includes_write_note_even_with_empty_registry(self, mock_deps) -> None:
+        mock_deps["registry"] = {}
+        loop = _make_loop(mock_deps)
+        tools = loop._build_tools()
+        assert len(tools) == 1
+        assert tools[0]["function"]["name"] == "write-note"
 
     async def test_includes_plugins_with_input_schema(self, mock_deps) -> None:
         loop = _make_loop(mock_deps)
-        tools = loop._build_plugin_tools()
+        tools = loop._build_tools()
         tool_names = [t["function"]["name"] for t in tools]
         assert "tool-plugin" in tool_names
 
     async def test_excludes_skills_even_with_input_schema(self, mock_deps) -> None:
         # SkillMeta has no input_schema — but even if it did, only PluginMeta is included
         loop = _make_loop(mock_deps)
-        tools = loop._build_plugin_tools()
+        tools = loop._build_tools()
         tool_names = [t["function"]["name"] for t in tools]
         assert "insight-linker" not in tool_names
         assert "skill-builder" not in tool_names
 
     async def test_excludes_plugins_without_input_schema(self, mock_deps) -> None:
         loop = _make_loop(mock_deps)
-        tools = loop._build_plugin_tools()
+        tools = loop._build_tools()
         tool_names = [t["function"]["name"] for t in tools]
         assert "calendar-input" not in tool_names
 
     async def test_tool_format_is_openai_compatible(self, mock_deps) -> None:
         loop = _make_loop(mock_deps)
-        tools = loop._build_plugin_tools()
+        tools = loop._build_tools()
         for tool in tools:
             assert tool["type"] == "function"
             assert "name" in tool["function"]
@@ -344,6 +358,30 @@ class TestHandleToolCall:
         await loop._handle_tool_call("tc1", "tool-plugin", {"items": [{"title": "Test"}]})
         context = mock_deps["runner"].run.call_args.args[1]
         assert context.input_data == {"items": [{"title": "Test"}]}
+
+    async def test_write_note_routes_to_garden_writer(self, mock_deps) -> None:
+        mock_deps["garden_writer"].handle_write_note = AsyncMock(
+            return_value={"status": "saved", "title": "Test", "path": "/vault/test.md"}
+        )
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call(
+            "tc1", "write-note", {"title": "Test", "content": "Body"}
+        )
+        mock_deps["garden_writer"].handle_write_note.assert_called_once_with(
+            {"title": "Test", "content": "Body"}
+        )
+        assert "saved" in result
+        mock_deps["runner"].run.assert_not_called()
+
+    async def test_write_note_logs_action(self, mock_deps) -> None:
+        mock_deps["garden_writer"].handle_write_note = AsyncMock(
+            return_value={"status": "saved", "title": "T", "path": "/p"}
+        )
+        loop = _make_loop(mock_deps)
+        await loop._handle_tool_call("tc1", "write-note", {"title": "T", "content": "C"})
+        mock_deps["garden_writer"].write_action.assert_called_once()
+        call_args = mock_deps["garden_writer"].write_action.call_args
+        assert call_args.args[0] == "write-note"
 
 
 class TestAgentLoopBuildContext:

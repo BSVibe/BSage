@@ -9,6 +9,7 @@ from bsage.core.config import Settings
 from bsage.core.credential_store import CredentialStore
 from bsage.core.danger_analyzer import DangerAnalyzer
 from bsage.core.llm import LiteLLMClient
+from bsage.core.notification import NotificationRouter
 from bsage.core.plugin_loader import PluginLoader
 from bsage.core.plugin_runner import PluginRunner
 from bsage.core.prompt_registry import PromptRegistry
@@ -113,6 +114,8 @@ class AppState:
             skills=len(skill_registry),
         )
 
+        notification_router = NotificationRouter()
+
         self.agent_loop = AgentLoop(
             registry=registry,
             runner=self.runner,
@@ -120,7 +123,21 @@ class AppState:
             garden_writer=self.garden_writer,
             llm_client=self.llm_client,
             prompt_registry=self.prompt_registry,
+            notification=notification_router,
         )
+
+        notification_router.setup(
+            registry=registry,
+            runner=self.runner,
+            context_builder=self.agent_loop.build_context,
+        )
+
+        # Register output skills so they run on vault write events
+        output_skills = [v for v in registry.values() if v.category == "output"]
+        if output_skills:
+            self.sync_manager.register_output_skills(
+                output_skills, self.runner, self.agent_loop.build_context
+            )
 
         self.scheduler = Scheduler(
             agent_loop=self.agent_loop,

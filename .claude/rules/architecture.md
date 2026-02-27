@@ -102,20 +102,19 @@ def run_skill(skill_meta):  # Blocks event loop!
     pass
 ```
 
-### 6. Skill Definitions in YAML
+### 6. Metadata Definitions in Files
 
-**ALL Skill 메타데이터는 `skill.yaml`에 정의.**
+**ALL Plugin/Skill metadata MUST be declared in their respective files, NOT hardcoded in Python source.**
 
-**LLM 프롬프트는 skill.yaml 내 description 또는 별도 prompts/ 디렉토리에.**
-
-**NEVER hardcode Skill 설정이나 프롬프트를 Python 소스에.**
+- Plugins: metadata via `@plugin` decorator in `plugins/name/plugin.py`
+- Skills: metadata via YAML frontmatter in `skills/name.md`; Markdown body is the system prompt
 
 ```python
 # Correct
-meta = skill_loader.get("garden-writer")  # yaml에서 로드
+meta = plugin_loader.get("telegram-input")  # loaded from plugin.py @plugin decorator
 
 # Wrong
-skill_config = {"name": "garden-writer", "category": "process"}  # Hardcoded
+plugin_config = {"name": "telegram-input", "category": "input"}  # Hardcoded
 ```
 
 ### 7. Dataclasses for Internal Data
@@ -127,16 +126,15 @@ skill_config = {"name": "garden-writer", "category": "process"}  # Hardcoded
 from dataclasses import dataclass, field
 
 @dataclass
-class SkillMeta:
+class PluginMeta:
     name: str
     version: str
     category: str
-    is_dangerous: bool
     description: str
-    rules: list[str] = field(default_factory=list)
+    trigger: dict | None = None
 
 # Wrong
-skill = {"name": "...", "category": "...", "is_dangerous": True}  # No type safety
+plugin = {"name": "...", "category": "..."}  # No type safety
 ```
 
 ### 8. PYTHONPATH Configuration
@@ -185,7 +183,7 @@ Before implementing ANY module:
 - [ ] pydantic-settings for config (no raw os.getenv)
 - [ ] structlog for logging (not print or logging.info)
 - [ ] async for all I/O operations
-- [ ] Skill definitions in skill.yaml (not hardcoded)
+- [ ] Plugin/Skill metadata declared in their respective files (not hardcoded)
 - [ ] Dataclasses for internal data structures
 - [ ] No sys.path.insert()
 - [ ] Vault/output/tmp paths from settings

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 import yaml
@@ -44,11 +45,16 @@ def _slugify(title: str) -> str:
     """Convert a title to a URL-friendly slug.
 
     Lowercase, replace spaces with hyphens, remove special characters.
+    Preserves Unicode word characters (Korean, Japanese, Chinese, etc.).
+    Falls back to a timestamp when the result would be empty.
     """
     slug = title.lower()
-    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"[^\w\s-]", "", slug)
     slug = re.sub(r"[\s]+", "-", slug.strip())
     slug = re.sub(r"-+", "-", slug)
+    slug = slug.strip("-")
+    if not slug:
+        slug = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
     return slug
 
 
@@ -59,6 +65,36 @@ def _build_frontmatter(metadata: dict) -> str:
 
 
 _MAX_ACTION_SUMMARY = 200
+
+_VALID_NOTE_TYPES = {"idea", "insight", "project"}
+
+WRITE_NOTE_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "write-note",
+        "description": (
+            "Write a note to the vault. Use when the user asks to save, create, or write something."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Title of the note"},
+                "content": {"type": "string", "description": "Markdown body content"},
+                "note_type": {
+                    "type": "string",
+                    "enum": sorted(_VALID_NOTE_TYPES),
+                    "description": "Note category (default: idea)",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional tags for categorization",
+                },
+            },
+            "required": ["title", "content"],
+        },
+    },
+}
 
 
 class GardenWriter:
@@ -108,7 +144,7 @@ class GardenWriter:
         body = yaml.dump(data, default_flow_style=False, allow_unicode=True)
         content = f"{frontmatter}\n{body}"
 
-        file_path.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
         logger.info("seed_written", source=source, path=str(file_path))
         await self._notify_sync("seed", file_path, source)
         return file_path
@@ -154,7 +190,7 @@ class GardenWriter:
         frontmatter = _build_frontmatter(metadata)
         content = f"{frontmatter}\n# {note.title}\n\n{note.content}\n"
 
-        file_path.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
         logger.info(
             "garden_note_written",
             title=note.title,
@@ -189,13 +225,14 @@ class GardenWriter:
         log_path = actions_dir / f"{date_str}.md"
         entry = f"- **{time_str}** | `{skill_name}` | {truncated}\n"
 
-        if log_path.exists():
-            with log_path.open("a", encoding="utf-8") as f:
-                f.write(entry)
-        else:
-            header = f"# Actions — {date_str}\n\n"
-            log_path.write_text(header + entry, encoding="utf-8")
+        def _write() -> None:
+            if log_path.exists():
+                with log_path.open("a", encoding="utf-8") as f:
+                    f.write(entry)
+            else:
+                log_path.write_text(f"# Actions — {date_str}\n\n" + entry, encoding="utf-8")
 
+        await asyncio.to_thread(_write)
         logger.info("action_logged", skill_name=skill_name, path=str(log_path))
         await self._notify_sync("action", log_path, skill_name)
 
@@ -227,6 +264,37 @@ class GardenWriter:
             paths.append(path)
         logger.info("items_written", source=source, count=len(paths))
         return paths
+
+    async def handle_write_note(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Handle a write-note tool call from the LLM.
+
+        Validates args, writes a garden note, and returns a result dict.
+
+        Args:
+            args: Tool call arguments with title, content, and optional
+                  note_type and tags.
+
+        Returns:
+            Dict with status, title, note_type, and path of the created note.
+        """
+        title = args.get("title", "Untitled")
+        content = args.get("content", "")
+        note_type = args.get("note_type", "idea")
+        tags = args.get("tags", [])
+
+        if note_type not in _VALID_NOTE_TYPES:
+            note_type = "idea"
+
+        path = await self.write_garden(
+            {
+                "title": title,
+                "content": content,
+                "note_type": note_type,
+                "source": "chat",
+                "tags": tags,
+            }
+        )
+        return {"status": "saved", "title": title, "note_type": note_type, "path": str(path)}
 
     async def read_notes(self, subdir: str) -> list[Path]:
         """Read notes from a vault subdirectory.

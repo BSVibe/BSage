@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,7 @@ class CredentialStore:
             logger.warning("credential_not_found", service=name)
             raise CredentialNotFoundError(f"No credentials for '{name}'")
 
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(await asyncio.to_thread(path.read_text, encoding="utf-8"))
         logger.debug("credential_loaded", service=name)
         return data
 
@@ -54,7 +55,8 @@ class CredentialStore:
         """
         self._dir.mkdir(parents=True, exist_ok=True)
         path = self._dir / f"{name}.json"
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        content = json.dumps(data, indent=2)
+        await asyncio.to_thread(path.write_text, content, encoding="utf-8")
         logger.info("credential_stored", service=name)
 
     async def delete(self, name: str) -> None:

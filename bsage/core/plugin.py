@@ -1,4 +1,4 @@
-"""@plugin decorator — Plugin 메타데이터를 Python에 직접 선언."""
+"""@plugin decorator — declares Plugin metadata directly in Python."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def plugin(
     credentials: list[dict[str, Any]] | None = None,
     input_schema: dict[str, Any] | None = None,
 ) -> Callable:
-    """Plugin 메타데이터를 execute 함수에 부착하는 decorator.
+    """Decorator that attaches Plugin metadata to the execute function.
 
     Only ``name`` and ``category`` are required.  Everything else has a
     sensible default so minimal plugins stay concise::

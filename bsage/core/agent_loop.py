@@ -12,7 +12,7 @@ from bsage.core.prompt_registry import PromptRegistry
 from bsage.core.runner import Runner
 from bsage.core.safe_mode import SafeModeGuard
 from bsage.core.skill_context import LLMClient, SkillContext
-from bsage.garden.writer import GardenWriter
+from bsage.garden.writer import WRITE_NOTE_TOOL, GardenWriter
 
 if TYPE_CHECKING:
     from bsage.core.plugin_loader import PluginMeta
@@ -54,15 +54,15 @@ class AgentLoop:
     async def chat(self, system: str, messages: list[dict]) -> str:
         """Interactive chat with tool-use plugin execution.
 
-        The LLM sees available plugins as tools and can call them during
-        the conversation.  Falls back to plain chat when no tools exist.
+        The LLM sees available plugins and built-in tools (write-note) and
+        can call them during the conversation.
         """
-        tools = self._build_plugin_tools() or None
+        tools = self._build_tools()
         return await self._llm_client.chat(
             system=system,
             messages=messages,
             tools=tools,
-            tool_handler=self._handle_tool_call if tools else None,
+            tool_handler=self._handle_tool_call,
         )
 
     async def on_input(self, plugin_name: str, raw_data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -129,11 +129,11 @@ class AgentLoop:
     # Tool use infrastructure (shared by chat and on_input)
     # ------------------------------------------------------------------
 
-    def _build_plugin_tools(self) -> list[dict]:
-        """Build OpenAI-format tool definitions from plugins with input_schema."""
+    def _build_tools(self) -> list[dict]:
+        """Build OpenAI-format tool definitions including built-in and plugin tools."""
         from bsage.core.plugin_loader import PluginMeta
 
-        tools = []
+        tools: list[dict] = [WRITE_NOTE_TOOL]
         for meta in self._registry.values():
             if isinstance(meta, PluginMeta) and meta.category == "process" and meta.input_schema:
                 tools.append(
@@ -151,8 +151,19 @@ class AgentLoop:
     async def _handle_tool_call(self, tool_call_id: str, name: str, args: dict[str, Any]) -> str:
         """Execute an entry triggered by an LLM tool call.
 
-        SafeMode → Runner.run() → action log → result JSON.
+        Built-in tools (write-note) are handled directly.
+        Plugin tools go through SafeMode → Runner.run() → action log.
         """
+        if name == "write-note":
+            try:
+                result = await self._garden_writer.handle_write_note(args)
+                summary = json.dumps(result, default=str)[:200]
+                await self._garden_writer.write_action("write-note", summary)
+                return json.dumps(result, default=str)
+            except Exception as exc:
+                logger.exception("write_note_failed")
+                return json.dumps({"error": str(exc)})
+
         meta = self._registry.get(name)
         if meta is None:
             return json.dumps({"error": f"Unknown plugin: {name}"})

@@ -194,7 +194,7 @@ class TestPluginLoader:
         assert "bad-category" not in registry
 
     async def test_load_all_minimal_declaration(self, tmp_path) -> None:
-        """name + category만으로 plugin 선언 가능."""
+        """Plugin can be declared with only name and category."""
         plugin_dir = tmp_path / "minimal"
         plugin_dir.mkdir()
         (plugin_dir / "plugin.py").write_text(
@@ -211,7 +211,7 @@ class TestPluginLoader:
         assert meta.description == ""
 
     async def test_load_all_description_falls_back_to_docstring(self, tmp_path) -> None:
-        """description 생략 시 함수 docstring을 사용."""
+        """Falls back to function docstring when description is omitted."""
         plugin_dir = tmp_path / "doc-plugin"
         plugin_dir.mkdir()
         (plugin_dir / "plugin.py").write_text(
@@ -219,7 +219,7 @@ class TestPluginLoader:
             "\n"
             "@plugin(name='doc-plugin', category='input')\n"
             "async def execute(context):\n"
-            "    \"\"\"My docstring description.\"\"\"\n"
+            '    """My docstring description."""\n'
             "    return {}\n"
         )
         loader = PluginLoader(tmp_path)

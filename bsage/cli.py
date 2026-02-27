@@ -16,7 +16,8 @@ import uvicorn
 
 from bsage.core.config import get_settings
 from bsage.core.credential_store import CredentialStore
-from bsage.core.skill_loader import SkillLoader
+from bsage.core.plugin_loader import PluginLoader, PluginMeta
+from bsage.core.skill_loader import SkillLoader, SkillMeta
 from bsage.garden.vault import Vault
 
 
@@ -190,7 +191,7 @@ def run_skill(name: str, host: str | None, port: int | None) -> None:
     base_url = f"http://{host or settings.gateway_host}:{port or settings.gateway_port}"
 
     try:
-        response = httpx.post(f"{base_url}/api/skills/{name}/run", timeout=30.0)
+        response = httpx.post(f"{base_url}/api/plugins/{name}/run", timeout=30.0)
         response.raise_for_status()
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gateway. Is it running?", err=True)
@@ -210,12 +211,22 @@ def setup(name: str) -> None:
     """Set up credentials for a skill."""
     _validate_skill_name(name)
     settings = get_settings()
-    loader = SkillLoader(settings.skills_dir)
-    registry = asyncio.run(loader.load_all())
+
+    # Try Skills first, then Plugins
+    skill_loader = SkillLoader(settings.skills_dir)
+    registry: dict[str, SkillMeta | PluginMeta] = dict(asyncio.run(skill_loader.load_all()))
+
+    if name not in registry:
+        plugin_loader = PluginLoader(settings.plugins_dir, danger_analyzer=None)
+        plugin_registry = asyncio.run(plugin_loader.load_all())
+        registry.update(plugin_registry)
 
     meta = registry.get(name)
     if meta is None:
-        click.echo(f"Error: Skill '{name}' not found in {settings.skills_dir}", err=True)
+        click.echo(
+            f"Error: '{name}' not found in {settings.skills_dir} or {settings.plugins_dir}",
+            err=True,
+        )
         raise SystemExit(1)
 
     if meta.credentials is None:
@@ -224,14 +235,18 @@ def setup(name: str) -> None:
 
     cred_store = CredentialStore(settings.credentials_dir)
 
-    # Custom setup entrypoint
-    setup_ep = meta.credentials.get("setup_entrypoint")
-    if setup_ep:
-        _run_credential_setup(settings.skills_dir, name, setup_ep, cred_store)
-        return
+    # PluginMeta.credentials is list[dict] (the fields list directly).
+    # SkillMeta.credentials is dict with optional "setup_entrypoint" and "fields" keys.
+    if isinstance(meta.credentials, list):
+        fields = meta.credentials
+    else:
+        # Custom setup entrypoint
+        setup_ep = meta.credentials.get("setup_entrypoint")
+        if setup_ep:
+            _run_credential_setup(settings.skills_dir, name, setup_ep, cred_store)
+            return
 
-    # Field-based prompt
-    fields = meta.credentials.get("fields", [])
+        fields = meta.credentials.get("fields", [])
     if not fields:
         click.echo(f"Skill '{name}' has no credential fields defined.")
         return

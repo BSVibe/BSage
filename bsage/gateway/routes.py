@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from bsage.gateway.chat import handle_chat
@@ -82,6 +82,29 @@ def create_routes(state: AppState) -> APIRouter:
             return {"plugin": name, "results": results}
         except Exception as exc:
             logger.exception("plugin_run_failed", plugin=name)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @api_router.post("/webhooks/{name}")
+    async def webhook(name: str, request: Request) -> dict[str, Any]:
+        """Receive a webhook payload and trigger an input plugin."""
+        if state.agent_loop is None:
+            raise HTTPException(status_code=503, detail="Gateway not initialized")
+
+        try:
+            state.plugin_loader.get(name)
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        try:
+            results = await state.agent_loop.on_input(name, body)
+            return {"plugin": name, "results": results}
+        except Exception as exc:
+            logger.exception("webhook_plugin_failed", plugin=name)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @api_router.get("/vault/actions")

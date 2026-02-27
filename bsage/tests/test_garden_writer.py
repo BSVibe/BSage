@@ -178,6 +178,44 @@ class TestWriteGarden:
         # Slug should be lowercase, hyphens, no special chars
         assert result.name == "hello-world-2026.md"
 
+    @pytest.mark.asyncio
+    async def test_write_garden_unicode_title(self, tmp_path: Path) -> None:
+        """write_garden should preserve Unicode characters in slugs."""
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        note = GardenNote(
+            title="자동화의 자동화 프로젝트",
+            content="한글 내용입니다.",
+            note_type="idea",
+            source="test",
+        )
+        result = await writer.write_garden(note)
+
+        assert result.name == "자동화의-자동화-프로젝트.md"
+        assert result.exists()
+        content = result.read_text()
+        assert "# 자동화의 자동화 프로젝트" in content
+
+    @pytest.mark.asyncio
+    async def test_write_garden_mixed_unicode_ascii_title(self, tmp_path: Path) -> None:
+        """write_garden should handle titles with both Unicode and ASCII."""
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        note = GardenNote(
+            title="harness-studio 컴포넌트 라이브러리",
+            content="Mixed content.",
+            note_type="idea",
+            source="test",
+        )
+        result = await writer.write_garden(note)
+
+        assert result.name == "harness-studio-컴포넌트-라이브러리.md"
+        assert result.exists()
+
 
 class TestWriteAction:
     """Test GardenWriter.write_action appends to daily log."""
@@ -427,3 +465,74 @@ class TestWriteFromItems:
 
         assert len(paths) == 1
         assert paths[0].name == "untitled.md"
+
+
+class TestHandleWriteNote:
+    """Test GardenWriter.handle_write_note — LLM tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_handle_write_note_calls_write_garden(self, tmp_path: Path) -> None:
+        """handle_write_note should write a garden note and return result."""
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        result = await writer.handle_write_note(
+            {"title": "Test Note", "content": "Body text", "tags": ["demo"]}
+        )
+
+        assert result["status"] == "saved"
+        assert result["title"] == "Test Note"
+        assert result["note_type"] == "idea"
+        assert "path" in result
+        assert Path(result["path"]).exists()
+
+    @pytest.mark.asyncio
+    async def test_handle_write_note_default_note_type(self, tmp_path: Path) -> None:
+        """Omitting note_type should default to 'idea'."""
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        result = await writer.handle_write_note({"title": "Minimal", "content": "Body"})
+
+        assert result["note_type"] == "idea"
+        content = Path(result["path"]).read_text()
+        assert "type: idea" in content
+
+    @pytest.mark.asyncio
+    async def test_handle_write_note_invalid_note_type_fallback(self, tmp_path: Path) -> None:
+        """Invalid note_type should fall back to 'idea'."""
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        result = await writer.handle_write_note(
+            {"title": "Bad Type", "content": "Body", "note_type": "invalid"}
+        )
+
+        assert result["note_type"] == "idea"
+
+    @pytest.mark.asyncio
+    async def test_handle_write_note_sets_source_to_chat(self, tmp_path: Path) -> None:
+        """Source should always be 'chat'."""
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        result = await writer.handle_write_note({"title": "Source Test", "content": "Body"})
+
+        content = Path(result["path"]).read_text()
+        assert "source: chat" in content
+
+    @pytest.mark.asyncio
+    async def test_handle_write_note_empty_args(self, tmp_path: Path) -> None:
+        """Empty args should produce an 'Untitled' note."""
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        result = await writer.handle_write_note({})
+
+        assert result["title"] == "Untitled"
+        assert result["status"] == "saved"

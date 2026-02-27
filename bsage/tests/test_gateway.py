@@ -134,6 +134,33 @@ class TestRunSkillEndpoint:
         assert response.status_code == 503
 
 
+class TestWebhookEndpoint:
+    """Test POST /api/webhooks/{name}."""
+
+    def test_webhook_triggers_plugin(self, client) -> None:
+        response = client.post("/api/webhooks/telegram-input", json={"message": "hello"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["plugin"] == "telegram-input"
+
+    def test_webhook_unknown_plugin_returns_404(self, client, mock_state) -> None:
+        from bsage.core.exceptions import PluginLoadError
+
+        mock_state.plugin_loader.get = MagicMock(side_effect=PluginLoadError("not found"))
+        response = client.post("/api/webhooks/nonexistent", json={})
+        assert response.status_code == 404
+
+    def test_webhook_uninit_returns_503(self, client, mock_state) -> None:
+        mock_state.agent_loop = None
+        response = client.post("/api/webhooks/telegram-input", json={})
+        assert response.status_code == 503
+
+    def test_webhook_plugin_error_returns_500(self, client, mock_state) -> None:
+        mock_state.agent_loop.on_input = AsyncMock(side_effect=RuntimeError("failed"))
+        response = client.post("/api/webhooks/telegram-input", json={})
+        assert response.status_code == 500
+
+
 class TestActionsEndpoint:
     """Test GET /api/vault/actions."""
 

@@ -73,48 +73,51 @@ logger.info(f"Using API key: {settings.anthropic_api_key}")  # NO!
 
 ### 4. Safe Mode
 
-**BSage의 안전 모델:**
+**BSage safety model:**
 
-**1차: Skill 설치 여부** — 사용자가 설치하지 않은 Skill은 실행 자체 불가.
+**Layer 1: Installation gate** — only installed Plugins/Skills can run; anything not installed cannot execute.
 
-**2차: SafeModeGuard**
+**Layer 2: SafeModeGuard**
 ```python
-# is_dangerous=True Skill은 반드시 사용자 승인 필요
-if skill_meta.is_dangerous:
-    approved = await interface.request_approval(skill_meta)
+# Dangerous plugins require user approval before execution
+if danger_fn(plugin_name):
+    approved = await interface.request_approval(plugin_meta)
     if not approved:
-        raise SkillRejectedError(f"User rejected execution of '{skill_meta.name}'")
+        raise SafeModeError(f"User rejected execution of '{plugin_meta.name}'")
 ```
 
-**NEVER bypass SafeModeGuard. NEVER skip is_dangerous check.**
+`is_dangerous` is **auto-detected** by `DangerAnalyzer` via AST static analysis — never declared manually.
+Markdown Skills are structurally always safe (no external calls possible).
 
-### 5. Vault 데이터 경계
+**NEVER bypass SafeModeGuard. NEVER skip the danger check.**
 
-**2nd Brain(Vault) 밖으로 절대 데이터가 나가지 않는다.**
+### 5. Vault Data Boundary
+
+**Data must never leave the 2nd Brain (Vault).**
 
 ```python
-# Correct — Vault 내부에서만 읽기/쓰기
+# Correct — read/write only within the Vault
 note_path = settings.vault_path / "garden" / "ideas" / f"{slug}.md"
 if not note_path.resolve().is_relative_to(settings.vault_path.resolve()):
     raise ValueError("Path traversal detected — cannot access outside Vault")
 
-# Wrong — Vault 데이터를 외부로 전송
+# Wrong — sends Vault data to an external service
 requests.post("https://external.api/data", json=vault_data)  # NEVER!
 ```
 
-**예외: OutputSkill을 통한 의도적 동기화만 허용 (git-output, s3-output 등)**
+**Exception: intentional sync through Output Plugins only (git-output, s3-output, etc.)**
 
 ### 6. Input Validation
 
 **Validate all external inputs:**
 
 ```python
-# Skill 이름 검증
+# Plugin/Skill name validation
 import re
 
-def validate_skill_name(name: str) -> str:
+def validate_plugin_name(name: str) -> str:
     if not re.match(r'^[a-z][a-z0-9-]*$', name):
-        raise ValueError(f"Invalid skill name: {name}. Use lowercase alphanumeric with hyphens.")
+        raise ValueError(f"Invalid name: {name}. Use lowercase alphanumeric with hyphens.")
     return name
 ```
 
@@ -139,10 +142,10 @@ pass  # tmp files remain
 **Principle of least privilege:**
 
 - Safe mode ON by default (`SAFE_MODE=true`)
-- 사용자가 설치한 Skill만 실행 가능
+- Only installed Plugins/Skills can execute
 - API keys scoped to minimum permissions
 - No `shell=True` in subprocess calls
-- Skill은 `context` 객체를 통해서만 외부 접근
+- Plugins access the outside world only through the `context` object
 
 ### 9. Error Messages
 
@@ -170,4 +173,4 @@ Before every commit:
 - [ ] Vault path traversal prevented
 - [ ] Temp file cleanup implemented
 - [ ] No `shell=True` in subprocess calls
-- [ ] is_dangerous correctly set on all Skills
+- [ ] DangerAnalyzer correctly classifies all Plugins (not manually overridden)
