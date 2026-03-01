@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from bsage.core.plugin_loader import PluginMeta
 
 import structlog
 
@@ -43,6 +46,37 @@ class SyncBackend(Protocol):
     def name(self) -> str: ...
 
     async def sync(self, event: WriteEvent) -> None: ...
+
+
+class PluginSyncAdapter:
+    """Adapts an output Plugin into the SyncBackend protocol.
+
+    Wraps a PluginMeta's execute function so it can be registered
+    with SyncManager alongside native SyncBackend implementations.
+    """
+
+    def __init__(
+        self,
+        meta: PluginMeta,
+        runner: RunnerLike,
+        context_builder: ContextBuilderLike,
+    ) -> None:
+        self._meta = meta
+        self._runner = runner
+        self._context_builder = context_builder
+
+    @property
+    def name(self) -> str:
+        return self._meta.name
+
+    async def sync(self, event: WriteEvent) -> None:
+        event_data = {
+            "event_type": event.event_type.value,
+            "path": str(event.path),
+            "source": event.source,
+        }
+        context = self._context_builder(input_data=event_data)
+        await self._runner.run(self._meta, context)
 
 
 class SyncManager:
@@ -104,6 +138,33 @@ class SyncManager:
                 continue
             self._output_skills.append(s)
             logger.info("output_skill_registered", name=s.name)
+
+    def register_output_plugins(
+        self,
+        plugins: list[PluginMeta],
+        plugin_runner: RunnerLike,
+        context_builder: ContextBuilderLike,
+    ) -> None:
+        """Register output plugins as SyncBackend adapters.
+
+        Each output-category plugin is wrapped in a PluginSyncAdapter
+        and registered as a sync backend.
+
+        Args:
+            plugins: List of output category PluginMeta.
+            plugin_runner: PluginRunner instance to execute plugins.
+            context_builder: Callable(input_data=dict) -> SkillContext.
+        """
+        for p in plugins:
+            if p.category != "output":
+                logger.warning(
+                    "non_output_plugin_rejected",
+                    name=p.name,
+                    category=p.category,
+                )
+                continue
+            adapter = PluginSyncAdapter(p, plugin_runner, context_builder)
+            self.register(adapter)
 
     async def notify(self, event: WriteEvent) -> None:
         """Notify all registered backends of a write event.

@@ -6,7 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 
 from bsage.core.skill_loader import SkillMeta
-from bsage.garden.sync import SyncBackend, SyncManager, WriteEvent, WriteEventType
+from bsage.garden.sync import (
+    PluginSyncAdapter,
+    SyncBackend,
+    SyncManager,
+    WriteEvent,
+    WriteEventType,
+)
 
 
 def _make_event(
@@ -203,6 +209,92 @@ class TestSyncManagerOutputSkills:
 
         # Rejected — not registered
         assert len(mgr._output_skills) == 0
+
+
+class TestPluginSyncAdapter:
+    """Test PluginSyncAdapter wraps output plugins as SyncBackend."""
+
+    def test_adapter_name_from_meta(self) -> None:
+        meta = MagicMock()
+        meta.name = "local-output"
+        meta.category = "output"
+        adapter = PluginSyncAdapter(meta, MagicMock(), MagicMock())
+        assert adapter.name == "local-output"
+
+    async def test_adapter_sync_calls_runner(self) -> None:
+        meta = MagicMock()
+        meta.name = "git-output"
+        runner = MagicMock()
+        runner.run = AsyncMock(return_value={"ok": True})
+        ctx = MagicMock()
+        builder = MagicMock(return_value=ctx)
+
+        adapter = PluginSyncAdapter(meta, runner, builder)
+        event = _make_event(source="test-plugin")
+        await adapter.sync(event)
+
+        builder.assert_called_once()
+        runner.run.assert_called_once_with(meta, ctx)
+
+    async def test_adapter_passes_event_data(self) -> None:
+        meta = MagicMock()
+        meta.name = "s3-output"
+        runner = MagicMock()
+        runner.run = AsyncMock()
+        builder = MagicMock(return_value=MagicMock())
+
+        adapter = PluginSyncAdapter(meta, runner, builder)
+        event = _make_event(
+            event_type=WriteEventType.GARDEN,
+            path="/vault/garden/idea/test.md",
+            source="weekly-digest",
+        )
+        await adapter.sync(event)
+
+        call_kwargs = builder.call_args.kwargs
+        assert call_kwargs["input_data"]["event_type"] == "garden"
+        assert call_kwargs["input_data"]["source"] == "weekly-digest"
+
+
+class TestSyncManagerOutputPlugins:
+    """Test register_output_plugins wraps plugins as adapters."""
+
+    def test_register_output_plugins_adds_backends(self) -> None:
+        mgr = SyncManager()
+        meta1 = MagicMock()
+        meta1.name = "local-output"
+        meta1.category = "output"
+        meta2 = MagicMock()
+        meta2.name = "git-output"
+        meta2.category = "output"
+
+        mgr.register_output_plugins([meta1, meta2], MagicMock(), MagicMock())
+        assert set(mgr.list_backends()) == {"local-output", "git-output"}
+
+    def test_register_output_plugins_rejects_non_output(self) -> None:
+        mgr = SyncManager()
+        meta = MagicMock()
+        meta.name = "process-thing"
+        meta.category = "process"
+
+        mgr.register_output_plugins([meta], MagicMock(), MagicMock())
+        assert mgr.list_backends() == []
+
+    async def test_registered_output_plugin_called_on_notify(self) -> None:
+        mgr = SyncManager()
+        meta = MagicMock()
+        meta.name = "local-output"
+        meta.category = "output"
+        runner = MagicMock()
+        runner.run = AsyncMock(return_value={"synced": True})
+        builder = MagicMock(return_value=MagicMock())
+
+        mgr.register_output_plugins([meta], runner, builder)
+
+        event = _make_event()
+        await mgr.notify(event)
+
+        runner.run.assert_called_once()
 
 
 class TestSyncBackendProtocol:
