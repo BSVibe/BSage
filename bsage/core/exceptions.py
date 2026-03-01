@@ -35,3 +35,7 @@ class PluginLoadError(BSageError):
 
 class PluginRunError(BSageError):
     """Raised when a plugin fails during execution."""
+
+
+class MissingCredentialError(PluginRunError):
+    """Raised when required credentials are not configured for a plugin."""

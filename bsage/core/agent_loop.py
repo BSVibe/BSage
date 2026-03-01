@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from bsage.core.events import emit_event
+from bsage.core.exceptions import MissingCredentialError
 from bsage.core.notification import NotificationInterface
 from bsage.core.prompt_registry import PromptRegistry
 from bsage.core.runner import Runner
@@ -41,6 +43,7 @@ class AgentLoop:
         notification: NotificationInterface | None = None,
         prompt_registry: PromptRegistry | None = None,
         event_bus: EventBus | None = None,
+        on_refresh: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._registry = registry
         self._runner = runner
@@ -50,6 +53,7 @@ class AgentLoop:
         self._notification = notification
         self._prompt_registry = prompt_registry
         self._event_bus = event_bus
+        self._on_refresh = on_refresh
 
     # ------------------------------------------------------------------
     # Public API
@@ -61,6 +65,8 @@ class AgentLoop:
         The LLM sees available plugins and built-in tools (write-note) and
         can call them during the conversation.
         """
+        if self._on_refresh:
+            await self._on_refresh()
         tools = self._build_tools()
         return await self._llm_client.chat(
             system=system,
@@ -76,6 +82,8 @@ class AgentLoop:
         2. Run deterministic on_input-triggered plugins/skills.
         3. Let LLM decide and execute on-demand plugins via tool use.
         """
+        if self._on_refresh:
+            await self._on_refresh()
         logger.info("agent_loop_input", plugin_name=plugin_name)
         await emit_event(self._event_bus, "INPUT_RECEIVED", {"plugin_name": plugin_name})
 
@@ -91,7 +99,11 @@ class AgentLoop:
                 logger.warning("entry_rejected_by_safe_mode", name=meta.name)
                 continue
             context = self.build_context(input_data=raw_data)
-            result = await self._runner.run(meta, context)
+            try:
+                result = await self._runner.run(meta, context)
+            except MissingCredentialError:
+                logger.warning("entry_skipped_missing_credentials", name=meta.name)
+                continue
             results.append(result)
             summary = json.dumps(result, default=str)
             await self._garden_writer.write_action(meta.name, summary)
@@ -212,6 +224,9 @@ class AgentLoop:
                 {"tool_call_id": tool_call_id, "name": name},
             )
             return json.dumps(result, default=str)
+        except MissingCredentialError as exc:
+            logger.warning("tool_call_missing_credentials", name=name)
+            return json.dumps({"error": str(exc)})
         except Exception as exc:
             logger.exception("tool_call_failed", name=name)
             return json.dumps({"error": str(exc)})

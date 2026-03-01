@@ -7,7 +7,7 @@ import uuid
 import structlog
 
 from bsage.core.events import emit_event
-from bsage.core.exceptions import CredentialNotFoundError, PluginRunError
+from bsage.core.exceptions import CredentialNotFoundError, MissingCredentialError, PluginRunError
 
 if __import__("typing").TYPE_CHECKING:
     from bsage.core.credential_store import CredentialStore
@@ -45,7 +45,7 @@ class PluginRunner:
             correlation_id=correlation_id,
         )
 
-        await self._auto_inject_credentials(meta.name, context)
+        await self._auto_inject_credentials(meta, context)
 
         if meta._execute_fn is None:
             raise PluginRunError(f"Plugin '{meta.name}' has no execute function")
@@ -89,7 +89,7 @@ class PluginRunner:
 
         logger.info("plugin_notify_start", name=meta.name)
 
-        await self._auto_inject_credentials(meta.name, context)
+        await self._auto_inject_credentials(meta, context)
 
         try:
             result = await meta._notify_fn(context)
@@ -101,12 +101,27 @@ class PluginRunner:
         logger.info("plugin_notify_complete", name=meta.name)
         return result
 
-    async def _auto_inject_credentials(self, plugin_name: str, context: SkillContext) -> None:
-        """Inject credentials into context.credentials if available."""
+    async def _auto_inject_credentials(self, meta: PluginMeta, context: SkillContext) -> None:
+        """Inject credentials into context and validate required fields are present."""
         if self._credential_store is None:
             return
+
+        required_fields = [f["name"] for f in (meta.credentials or []) if f.get("required", True)]
+
         try:
-            creds = await self._credential_store.get(plugin_name)
+            creds = await self._credential_store.get(meta.name)
             context.credentials = dict(creds)
         except CredentialNotFoundError:
-            pass
+            if required_fields:
+                raise MissingCredentialError(
+                    f"Plugin '{meta.name}' requires credentials: {required_fields}. "
+                    f"Run: bsage setup {meta.name}"
+                ) from None
+            return
+
+        missing = [f for f in required_fields if f not in context.credentials]
+        if missing:
+            raise MissingCredentialError(
+                f"Plugin '{meta.name}' missing required credential fields: {missing}. "
+                f"Run: bsage setup {meta.name}"
+            )

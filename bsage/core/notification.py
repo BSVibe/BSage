@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import structlog
@@ -38,7 +39,7 @@ class NotificationRouter:
 
     def setup(
         self,
-        registry: dict[str, object],
+        registry: Mapping[str, object],
         runner: NotifyRunnerLike,
         context_builder: ContextBuilderLike,
     ) -> None:

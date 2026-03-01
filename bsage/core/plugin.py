@@ -58,7 +58,13 @@ def plugin(
             fn.__notify__ = notify_fn
             return notify_fn
 
+        def _attach_setup(setup_fn: Callable) -> Callable:
+            """Register a credential setup function on this plugin's execute function."""
+            fn.__setup__ = setup_fn
+            return setup_fn
+
         fn.notify = _attach_notify
+        fn.setup = _attach_setup
         return fn
 
     return decorator

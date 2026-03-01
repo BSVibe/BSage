@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from bsage.core.agent_loop import AgentLoop
+from bsage.core.exceptions import MissingCredentialError
 from bsage.core.plugin_loader import PluginMeta
 from bsage.core.skill_loader import SkillMeta
 
@@ -441,3 +442,34 @@ class TestAgentLoopEvents:
         loop = _make_loop(mock_deps)  # no event_bus
         results = await loop.on_input("calendar-input", {"events": []})
         assert isinstance(results, list)
+
+
+class TestMissingCredentials:
+    """Test graceful handling of MissingCredentialError."""
+
+    async def test_on_input_skips_missing_credentials(self, mock_deps) -> None:
+        """Plugins with missing credentials are skipped, rest continues."""
+        call_count = 0
+
+        async def run_side_effect(meta, ctx):
+            nonlocal call_count
+            if meta.name == "insight-linker":
+                raise MissingCredentialError("bsage setup insight-linker")
+            call_count += 1
+            return {"status": "ok"}
+
+        mock_deps["runner"].run = AsyncMock(side_effect=run_side_effect)
+        loop = _make_loop(mock_deps)
+        results = await loop.on_input("calendar-input", {"events": []})
+        # insight-linker was skipped, but other triggered entries still ran
+        assert call_count > 0
+        assert all(r["status"] == "ok" for r in results)
+
+    async def test_tool_call_returns_error_on_missing_credentials(self, mock_deps) -> None:
+        mock_deps["runner"].run = AsyncMock(
+            side_effect=MissingCredentialError("Run: bsage setup tool-plugin")
+        )
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call("tc1", "tool-plugin", {})
+        assert "error" in result
+        assert "bsage setup" in result

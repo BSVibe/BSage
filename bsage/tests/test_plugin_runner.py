@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from bsage.core.exceptions import CredentialNotFoundError, PluginRunError
+from bsage.core.exceptions import CredentialNotFoundError, MissingCredentialError, PluginRunError
 from bsage.core.plugin_loader import PluginMeta
 from bsage.core.plugin_runner import PluginRunner
 
@@ -109,9 +109,10 @@ class TestPluginRunnerCredentials:
 
         assert mock_context.credentials == {"api_key": "secret"}
 
-    async def test_no_credentials_does_not_fail(self, mock_context) -> None:
+    async def test_no_credentials_declared_does_not_fail(self, mock_context) -> None:
+        """Plugin with credentials=None (no declaration) runs fine without stored creds."""
         execute_fn = AsyncMock(return_value={"status": "ok"})
-        meta = _make_plugin_meta()
+        meta = _make_plugin_meta()  # credentials=None by default
         meta._execute_fn = execute_fn
 
         cred_store = MagicMock()
@@ -197,5 +198,78 @@ class TestPluginRunnerEvents:
         meta = _make_plugin_meta()
         meta._execute_fn = AsyncMock(return_value={"ok": True})
         runner = PluginRunner()  # no event_bus
+        result = await runner.run(meta, mock_context)
+        assert result == {"ok": True}
+
+
+class TestCredentialValidation:
+    """Test required credential validation in PluginRunner."""
+
+    async def test_raises_when_required_creds_missing(self, mock_context) -> None:
+        meta = _make_plugin_meta(
+            credentials=[{"name": "api_key", "description": "Key", "required": True}],
+        )
+        meta._execute_fn = AsyncMock(return_value={})
+
+        cred_store = MagicMock()
+        cred_store.get = AsyncMock(side_effect=CredentialNotFoundError("no creds"))
+
+        runner = PluginRunner(credential_store=cred_store)
+        with pytest.raises(MissingCredentialError, match="bsage setup test-plugin"):
+            await runner.run(meta, mock_context)
+
+    async def test_ok_when_only_optional_missing(self, mock_context) -> None:
+        meta = _make_plugin_meta(
+            credentials=[{"name": "debug_mode", "description": "Debug", "required": False}],
+        )
+        meta._execute_fn = AsyncMock(return_value={"ok": True})
+
+        cred_store = MagicMock()
+        cred_store.get = AsyncMock(side_effect=CredentialNotFoundError("no creds"))
+
+        runner = PluginRunner(credential_store=cred_store)
+        result = await runner.run(meta, mock_context)
+        assert result == {"ok": True}
+
+    async def test_raises_when_required_field_missing_from_stored(self, mock_context) -> None:
+        meta = _make_plugin_meta(
+            credentials=[
+                {"name": "api_key", "description": "Key", "required": True},
+                {"name": "secret", "description": "Secret", "required": True},
+            ],
+        )
+        meta._execute_fn = AsyncMock(return_value={})
+
+        cred_store = MagicMock()
+        cred_store.get = AsyncMock(return_value={"api_key": "val"})  # secret missing
+
+        runner = PluginRunner(credential_store=cred_store)
+        with pytest.raises(MissingCredentialError, match="secret"):
+            await runner.run(meta, mock_context)
+
+    async def test_ok_when_all_required_present(self, mock_context) -> None:
+        meta = _make_plugin_meta(
+            credentials=[
+                {"name": "api_key", "description": "Key", "required": True},
+                {"name": "extra", "description": "Extra", "required": False},
+            ],
+        )
+        meta._execute_fn = AsyncMock(return_value={"ok": True})
+
+        cred_store = MagicMock()
+        cred_store.get = AsyncMock(return_value={"api_key": "val"})
+
+        runner = PluginRunner(credential_store=cred_store)
+        result = await runner.run(meta, mock_context)
+        assert result == {"ok": True}
+
+    async def test_ok_when_no_credentials_declared(self, mock_context) -> None:
+        meta = _make_plugin_meta()  # credentials=None
+        meta._execute_fn = AsyncMock(return_value={"ok": True})
+
+        cred_store = MagicMock()
+        cred_store.get = AsyncMock(side_effect=CredentialNotFoundError("no creds"))
+
+        runner = PluginRunner(credential_store=cred_store)
         result = await runner.run(meta, mock_context)
         assert result == {"ok": True}
