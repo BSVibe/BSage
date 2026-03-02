@@ -2,8 +2,11 @@ import type {
   ChatRequest,
   ChatResponse,
   ConfigUpdate,
+  CredentialFieldsResponse,
   EntryMeta,
   RuntimeConfig,
+  VaultFileResponse,
+  VaultTreeEntry,
 } from "./types";
 
 const BASE = "/api";
@@ -39,4 +42,24 @@ export const api = {
     request<RuntimeConfig>("/config", { method: "PATCH", body: JSON.stringify(update) }),
 
   actions: () => request<string[]>("/vault/actions"),
+
+  // Credential setup
+  credentialFields: (name: string) =>
+    request<CredentialFieldsResponse>(`/entries/${name}/credentials/fields`),
+
+  storeCredentials: (name: string, credentials: Record<string, string>) =>
+    request<{ status: string; name: string }>(`/entries/${name}/credentials`, {
+      method: "POST",
+      body: JSON.stringify({ credentials }),
+    }),
+
+  // Enable/Disable toggle
+  toggleEntry: (name: string) =>
+    request<{ name: string; enabled: boolean }>(`/entries/${name}/toggle`, { method: "POST" }),
+
+  // Vault browser
+  vaultTree: () => request<VaultTreeEntry[]>("/vault/tree"),
+
+  vaultFile: (path: string) =>
+    request<VaultFileResponse>(`/vault/file?path=${encodeURIComponent(path)}`),
 };

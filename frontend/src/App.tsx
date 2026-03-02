@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { useApproval } from "./hooks/useApproval";
 import { useWebSocket } from "./hooks/useWebSocket";
-import { ActionsView } from "./components/actions/ActionsView";
 import { ApprovalModal } from "./components/approval/ApprovalModal";
 import { ChatView } from "./components/chat/ChatView";
 import { DashboardView } from "./components/dashboard/DashboardView";
 import { EventPanel } from "./components/events/EventPanel";
 import { Layout } from "./components/layout/Layout";
 import { SettingsView } from "./components/settings/SettingsView";
+import { VaultView } from "./components/vault/VaultView";
 
 function useHashRoute() {
   const [hash, setHash] = useState(window.location.hash || "#/");
@@ -23,8 +23,9 @@ function RouteContent({ hash }: { hash: string }) {
   switch (hash) {
     case "#/dashboard":
       return <DashboardView />;
+    case "#/vault":
     case "#/actions":
-      return <ActionsView />;
+      return <VaultView />;
     case "#/settings":
       return <SettingsView />;
     default:

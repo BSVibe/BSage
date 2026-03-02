@@ -7,6 +7,7 @@ export interface EntryMeta {
   description: string;
   has_credentials: boolean;
   credentials_configured: boolean;
+  enabled: boolean;
 }
 
 /** POST /api/chat request body. */
@@ -33,7 +34,9 @@ export interface RuntimeConfig {
   safe_mode: boolean;
   embedding_model: string;
   embedding_api_base: string | null;
-  [key: string]: unknown;
+  disabled_entries: string[];
+  has_llm_api_key: boolean;
+  has_embedding_api_key: boolean;
 }
 
 /** PATCH /api/config request body. */
@@ -42,6 +45,34 @@ export interface ConfigUpdate {
   llm_api_key?: string;
   llm_api_base?: string | null;
   safe_mode?: boolean;
+  disabled_entries?: string[];
+}
+
+/** GET /api/entries/{name}/credentials/fields response. */
+export interface CredentialFieldsResponse {
+  name: string;
+  gui_setup: boolean;
+  message: string | null;
+  fields: CredentialField[];
+}
+
+export interface CredentialField {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+/** GET /api/vault/tree response entry. */
+export interface VaultTreeEntry {
+  path: string;
+  dirs: string[];
+  files: string[];
+}
+
+/** GET /api/vault/file response. */
+export interface VaultFileResponse {
+  path: string;
+  content: string;
 }
 
 /** WebSocket event broadcast from EventBus. */

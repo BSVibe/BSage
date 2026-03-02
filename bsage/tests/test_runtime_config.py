@@ -10,11 +10,12 @@ from bsage.core.runtime_config import RuntimeConfig
 
 def _cfg(**overrides: object) -> RuntimeConfig:
     """Create a RuntimeConfig with sensible defaults."""
-    defaults = {
+    defaults: dict[str, object] = {
         "llm_model": "model-a",
         "llm_api_key": "",
         "llm_api_base": None,
         "safe_mode": True,
+        "disabled_entries": [],
     }
     defaults.update(overrides)
     return RuntimeConfig(**defaults)
@@ -173,6 +174,7 @@ class TestRuntimeConfigFromSettings:
         settings.llm_api_key = "sk-test"
         settings.llm_api_base = None
         settings.safe_mode = True
+        settings.disabled_entries = []
 
         config = RuntimeConfig.from_settings(settings, persist_path=None)
         assert config.llm_model == "anthropic/claude-sonnet-4-20250514"
@@ -197,6 +199,7 @@ class TestRuntimeConfigFromSettings:
         settings.llm_api_key = "sk-test"
         settings.llm_api_base = None
         settings.safe_mode = True
+        settings.disabled_entries = []
 
         config = RuntimeConfig.from_settings(settings, persist_path=persist_path)
         assert config.llm_model == "ollama/llama3"
@@ -212,6 +215,7 @@ class TestRuntimeConfigFromSettings:
         settings.llm_api_key = "key"
         settings.llm_api_base = None
         settings.safe_mode = True
+        settings.disabled_entries = []
 
         config = RuntimeConfig.from_settings(settings, persist_path=persist_path)
         assert config.llm_model == "model-a"
@@ -225,6 +229,7 @@ class TestRuntimeConfigFromSettings:
         settings.llm_api_key = "key"
         settings.llm_api_base = None
         settings.safe_mode = True
+        settings.disabled_entries = []
 
         config = RuntimeConfig.from_settings(settings, persist_path=persist_path)
         assert config.llm_model == "model-a"  # falls back to Settings
@@ -238,8 +243,44 @@ class TestRuntimeConfigFromSettings:
         settings.llm_api_key = "key"
         settings.llm_api_base = None
         settings.safe_mode = True
+        settings.disabled_entries = []
 
         config = RuntimeConfig.from_settings(settings, persist_path=persist_path)
         assert config.llm_model == "new-model"
         assert config.llm_api_key == "key"  # from Settings
         assert config.safe_mode is True  # from Settings
+
+
+class TestDisabledEntries:
+    """Test disabled_entries field in RuntimeConfig."""
+
+    def test_init_default_empty_list(self) -> None:
+        config = _cfg()
+        assert config.disabled_entries == []
+
+    def test_init_with_disabled_entries(self) -> None:
+        config = _cfg(disabled_entries=["plugin-a", "skill-b"])
+        assert config.disabled_entries == ["plugin-a", "skill-b"]
+
+    def test_update_disabled_entries(self) -> None:
+        config = _cfg()
+        config.update(disabled_entries=["plugin-a"])
+        assert config.disabled_entries == ["plugin-a"]
+
+    def test_update_disabled_entries_to_empty(self) -> None:
+        config = _cfg(disabled_entries=["plugin-a"])
+        config.update(disabled_entries=[])
+        assert config.disabled_entries == []
+
+    def test_snapshot_includes_disabled_entries(self) -> None:
+        config = _cfg(disabled_entries=["skill-x"])
+        snap = config.snapshot()
+        assert snap["disabled_entries"] == ["skill-x"]
+
+    def test_persist_includes_disabled_entries(self, tmp_path) -> None:
+        persist_path = tmp_path / "config.json"
+        config = _cfg(persist_path=persist_path, disabled_entries=["a"])
+        config.update(disabled_entries=["a", "b"])
+
+        data = json.loads(persist_path.read_text())
+        assert data["disabled_entries"] == ["a", "b"]

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from bsage.core.config import Settings
+from bsage.core.plugin_loader import PluginMeta
 from bsage.core.prompt_registry import PromptRegistry
 from bsage.core.runtime_config import RuntimeConfig
 from bsage.core.skill_loader import SkillMeta
@@ -53,6 +54,7 @@ def mock_state():
         llm_api_key="test-key",
         llm_api_base=None,
         safe_mode=True,
+        disabled_entries=[],
     )
     state.sync_manager = SyncManager()
     state.llm_client = AsyncMock()
@@ -480,3 +482,289 @@ class TestChatEndpoint:
         mock_state.agent_loop = None
         response = client.post("/api/chat", json={"message": "Hello"})
         assert response.status_code == 503
+
+
+class TestCredentialFieldsEndpoint:
+    """Test GET /api/entries/{name}/credentials/fields."""
+
+    def test_plugin_with_fields(self, client, mock_state) -> None:
+        meta = PluginMeta(
+            name="email-input",
+            version="1.0.0",
+            category="input",
+            description="Email",
+            credentials=[
+                {"name": "email", "description": "Email addr", "required": True},
+                {"name": "password", "description": "Password", "required": True},
+            ],
+        )
+        mock_state.plugin_loader.get = MagicMock(return_value=meta)
+
+        response = client.get("/api/entries/email-input/credentials/fields")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["gui_setup"] is True
+        assert len(data["fields"]) == 2
+        assert data["fields"][0]["name"] == "email"
+
+    def test_plugin_with_setup_fn(self, client, mock_state) -> None:
+        meta = PluginMeta(
+            name="oauth-plugin",
+            version="1.0.0",
+            category="input",
+            description="OAuth plugin",
+            _setup_fn=lambda store: None,
+        )
+        mock_state.plugin_loader.get = MagicMock(return_value=meta)
+
+        response = client.get("/api/entries/oauth-plugin/credentials/fields")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["gui_setup"] is False
+        assert "CLI" in data["message"]
+
+    def test_skill_with_fields(self, client, mock_state) -> None:
+        from bsage.core.exceptions import PluginLoadError
+
+        mock_state.plugin_loader.get = MagicMock(side_effect=PluginLoadError("nope"))
+        meta = _make_meta(
+            name="custom-skill",
+            credentials={
+                "fields": [
+                    {"name": "token", "description": "API token", "required": True},
+                ],
+            },
+        )
+        mock_state.skill_loader.get = MagicMock(return_value=meta)
+
+        response = client.get("/api/entries/custom-skill/credentials/fields")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["gui_setup"] is True
+        assert len(data["fields"]) == 1
+
+    def test_skill_with_setup_entrypoint(self, client, mock_state) -> None:
+        from bsage.core.exceptions import PluginLoadError
+
+        mock_state.plugin_loader.get = MagicMock(side_effect=PluginLoadError("nope"))
+        meta = _make_meta(
+            name="setup-skill",
+            credentials={"setup_entrypoint": "setup.py::run"},
+        )
+        mock_state.skill_loader.get = MagicMock(return_value=meta)
+
+        response = client.get("/api/entries/setup-skill/credentials/fields")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["gui_setup"] is False
+
+    def test_unknown_entry_returns_404(self, client, mock_state) -> None:
+        from bsage.core.exceptions import PluginLoadError, SkillLoadError
+
+        mock_state.plugin_loader.get = MagicMock(side_effect=PluginLoadError("nope"))
+        mock_state.skill_loader.get = MagicMock(side_effect=SkillLoadError("nope"))
+
+        response = client.get("/api/entries/nonexistent/credentials/fields")
+        assert response.status_code == 404
+
+    def test_entry_no_credentials(self, client, mock_state) -> None:
+        meta = PluginMeta(
+            name="simple-plugin",
+            version="1.0.0",
+            category="process",
+            description="No creds",
+            credentials=None,
+        )
+        mock_state.plugin_loader.get = MagicMock(return_value=meta)
+
+        response = client.get("/api/entries/simple-plugin/credentials/fields")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["gui_setup"] is True
+        assert data["fields"] == []
+
+
+class TestStoreCredentialsEndpoint:
+    """Test POST /api/entries/{name}/credentials."""
+
+    def test_store_credentials_success(self, client, mock_state) -> None:
+        meta = PluginMeta(
+            name="email-input",
+            version="1.0.0",
+            category="input",
+            description="Email",
+            credentials=[{"name": "token", "description": "Token", "required": True}],
+        )
+        mock_state.plugin_loader.get = MagicMock(return_value=meta)
+        mock_state.credential_store.store = AsyncMock()
+
+        response = client.post(
+            "/api/entries/email-input/credentials",
+            json={"credentials": {"token": "abc123"}},
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+        mock_state.credential_store.store.assert_called_once_with(
+            "email-input", {"token": "abc123"}
+        )
+
+    def test_store_credentials_unknown_entry_404(self, client, mock_state) -> None:
+        from bsage.core.exceptions import PluginLoadError, SkillLoadError
+
+        mock_state.plugin_loader.get = MagicMock(side_effect=PluginLoadError("nope"))
+        mock_state.skill_loader.get = MagicMock(side_effect=SkillLoadError("nope"))
+
+        response = client.post(
+            "/api/entries/nonexistent/credentials",
+            json={"credentials": {"x": "y"}},
+        )
+        assert response.status_code == 404
+
+    def test_store_credentials_setup_fn_plugin_400(self, client, mock_state) -> None:
+        meta = PluginMeta(
+            name="oauth-plugin",
+            version="1.0.0",
+            category="input",
+            description="OAuth",
+            _setup_fn=lambda store: None,
+        )
+        mock_state.plugin_loader.get = MagicMock(return_value=meta)
+
+        response = client.post(
+            "/api/entries/oauth-plugin/credentials",
+            json={"credentials": {"x": "y"}},
+        )
+        assert response.status_code == 400
+
+
+class TestToggleEndpoint:
+    """Test POST /api/entries/{name}/toggle."""
+
+    def test_toggle_disables_entry(self, client, mock_state) -> None:
+        response = client.post("/api/entries/some-plugin/toggle")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "some-plugin"
+        assert data["enabled"] is False
+
+    def test_toggle_enables_disabled_entry(self, client, mock_state) -> None:
+        mock_state.runtime_config.update(disabled_entries=["some-plugin"])
+        response = client.post("/api/entries/some-plugin/toggle")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enabled"] is True
+
+    def test_run_disabled_entry_returns_403(self, client, mock_state) -> None:
+        mock_state.runtime_config.update(disabled_entries=["garden-writer"])
+        mock_state.agent_loop.get_entry = MagicMock(return_value=_make_meta(name="garden-writer"))
+        response = client.post("/api/run/garden-writer")
+        assert response.status_code == 403
+
+    def test_run_disabled_plugin_returns_403(self, client, mock_state) -> None:
+        mock_state.runtime_config.update(disabled_entries=["garden-writer"])
+        response = client.post("/api/plugins/garden-writer/run")
+        assert response.status_code == 403
+
+
+class TestVaultTreeEndpoint:
+    """Test GET /api/vault/tree."""
+
+    def test_vault_tree_returns_structure(self, client, mock_state, tmp_path) -> None:
+        vault_root = tmp_path / "vault"
+        (vault_root / "seeds").mkdir(parents=True)
+        (vault_root / "garden" / "idea").mkdir(parents=True)
+        (vault_root / "actions").mkdir(parents=True)
+        (vault_root / "seeds" / "note.md").write_text("test")
+
+        mock_state.vault.root = vault_root
+
+        response = client.get("/api/vault/tree")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) > 0
+        paths = [e["path"] for e in data]
+        assert "" in paths  # root
+
+    def test_vault_tree_excludes_hidden_dirs(self, client, mock_state, tmp_path) -> None:
+        vault_root = tmp_path / "vault"
+        (vault_root / ".obsidian").mkdir(parents=True)
+        (vault_root / "seeds").mkdir(parents=True)
+
+        mock_state.vault.root = vault_root
+
+        response = client.get("/api/vault/tree")
+        data = response.json()
+        all_dirs = []
+        for entry in data:
+            all_dirs.extend(entry["dirs"])
+        assert ".obsidian" not in all_dirs
+
+
+class TestVaultFileEndpoint:
+    """Test GET /api/vault/file."""
+
+    def test_vault_file_returns_content(self, client, mock_state, tmp_path) -> None:
+        vault_root = tmp_path / "vault"
+        (vault_root / "seeds").mkdir(parents=True)
+        note = vault_root / "seeds" / "note.md"
+        note.write_text("# Test Note\nContent here")
+
+        mock_state.vault.resolve_path = MagicMock(return_value=note)
+        mock_state.vault.read_note_content = AsyncMock(return_value="# Test Note\nContent here")
+
+        response = client.get("/api/vault/file?path=seeds/note.md")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["path"] == "seeds/note.md"
+        assert "Test Note" in data["content"]
+
+    def test_vault_file_traversal_returns_400(self, client, mock_state) -> None:
+        from bsage.core.exceptions import VaultPathError
+
+        mock_state.vault.resolve_path = MagicMock(side_effect=VaultPathError("traversal blocked"))
+
+        response = client.get("/api/vault/file?path=../../etc/passwd")
+        assert response.status_code == 400
+
+    def test_vault_file_not_found_returns_404(self, client, mock_state, tmp_path) -> None:
+        resolved = tmp_path / "nonexistent.md"
+        mock_state.vault.resolve_path = MagicMock(return_value=resolved)
+
+        response = client.get("/api/vault/file?path=nonexistent.md")
+        assert response.status_code == 404
+
+
+class TestConfigEndpointsExtended:
+    """Test config endpoints with new fields."""
+
+    def test_get_config_includes_has_api_key(self, client) -> None:
+        response = client.get("/api/config")
+        data = response.json()
+        assert "has_llm_api_key" in data
+        assert data["has_llm_api_key"] is True  # test-key is set
+
+    def test_get_config_includes_has_embedding_api_key(self, client) -> None:
+        response = client.get("/api/config")
+        data = response.json()
+        assert "has_embedding_api_key" in data
+
+    def test_get_config_includes_disabled_entries(self, client) -> None:
+        response = client.get("/api/config")
+        data = response.json()
+        assert "disabled_entries" in data
+        assert data["disabled_entries"] == []
+
+    def test_patch_config_updates_disabled_entries(self, client) -> None:
+        response = client.patch(
+            "/api/config",
+            json={"disabled_entries": ["plugin-a", "skill-b"]},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["disabled_entries"] == ["plugin-a", "skill-b"]
+
+    def test_skills_include_enabled_field(self, client) -> None:
+        response = client.get("/api/skills")
+        skill = response.json()[0]
+        assert "enabled" in skill
+        assert skill["enabled"] is True

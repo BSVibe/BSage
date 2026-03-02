@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,6 +36,7 @@ class _ConfigState:
     embedding_model: str = ""
     embedding_api_key: str = ""
     embedding_api_base: str | None = None
+    disabled_entries: list[str] = field(default_factory=list)
 
 
 # Pre-computed at import time — avoids repeated introspection.

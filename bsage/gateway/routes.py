@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from bsage.core.exceptions import VaultPathError
+from bsage.core.plugin_loader import PluginMeta
+from bsage.core.skill_loader import SkillMeta
 from bsage.gateway.chat import handle_chat
 from bsage.gateway.dependencies import AppState
 
@@ -33,12 +38,33 @@ class ConfigUpdate(BaseModel):
     llm_api_key: str | None = None
     llm_api_base: str | None = None
     safe_mode: bool | None = None
+    disabled_entries: list[str] | None = None
+
+
+class CredentialStoreRequest(BaseModel):
+    """Request body for POST /api/entries/{name}/credentials."""
+
+    credentials: dict[str, str]
+
+
+def _find_entry(state: AppState, name: str) -> PluginMeta | SkillMeta:
+    """Look up a plugin or skill by name, raising 404 if not found."""
+    try:
+        return state.plugin_loader.get(name)
+    except Exception:
+        pass
+    try:
+        return state.skill_loader.get(name)
+    except Exception:
+        pass
+    raise HTTPException(status_code=404, detail=f"'{name}' not found in registry")
 
 
 def _meta_to_dict(
     meta: Any,
     danger_map: dict[str, bool] | None = None,
     configured_services: list[str] | None = None,
+    disabled_entries: list[str] | None = None,
 ) -> dict[str, Any]:
     """Serialize a PluginMeta or SkillMeta to a JSON-safe dict."""
     creds = meta.credentials
@@ -58,6 +84,7 @@ def _meta_to_dict(
         "credentials_configured": (
             meta.name in (configured_services or []) if has_credentials else True
         ),
+        "enabled": meta.name not in (disabled_entries or []),
     }
 
 
@@ -74,14 +101,22 @@ def create_routes(state: AppState) -> APIRouter:
         """List all loaded Plugins (code-based)."""
         registry = await state.plugin_loader.load_all()
         configured = state.credential_store.list_services()
-        return [_meta_to_dict(meta, state.danger_map, configured) for meta in registry.values()]
+        disabled = state.runtime_config.disabled_entries
+        return [
+            _meta_to_dict(meta, state.danger_map, configured, disabled)
+            for meta in registry.values()
+        ]
 
     @api_router.get("/skills")
     async def list_skills() -> list[dict[str, Any]]:
         """List all loaded Skills (LLM-based)."""
         registry = await state.skill_loader.load_all()
         configured = state.credential_store.list_services()
-        return [_meta_to_dict(meta, state.danger_map, configured) for meta in registry.values()]
+        disabled = state.runtime_config.disabled_entries
+        return [
+            _meta_to_dict(meta, state.danger_map, configured, disabled)
+            for meta in registry.values()
+        ]
 
     @api_router.post("/plugins/{name}/run")
     async def run_plugin(name: str) -> dict[str, Any]:
@@ -90,6 +125,9 @@ def create_routes(state: AppState) -> APIRouter:
             state.plugin_loader.get(name)
         except Exception as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if name in state.runtime_config.disabled_entries:
+            raise HTTPException(status_code=403, detail=f"'{name}' is disabled")
 
         if state.agent_loop is None:
             raise HTTPException(status_code=503, detail="Gateway not initialized")
@@ -126,11 +164,7 @@ def create_routes(state: AppState) -> APIRouter:
 
     @api_router.post("/run/{name}")
     async def run_entry(name: str) -> dict[str, Any]:
-        """Run a plugin or skill by name via unified registry.
-
-        Unlike ``/plugins/{name}/run``, this endpoint checks both plugins
-        and skills in the unified AgentLoop registry.
-        """
+        """Run a plugin or skill by name via unified registry."""
         if state.agent_loop is None:
             raise HTTPException(status_code=503, detail="Gateway not initialized")
 
@@ -139,6 +173,9 @@ def create_routes(state: AppState) -> APIRouter:
         except KeyError:
             raise HTTPException(status_code=404, detail=f"'{name}' not found in registry") from None
 
+        if name in state.runtime_config.disabled_entries:
+            raise HTTPException(status_code=403, detail=f"'{name}' is disabled")
+
         try:
             results = await state.agent_loop.on_input(name, {})
             return {"name": name, "results": results}
@@ -146,15 +183,141 @@ def create_routes(state: AppState) -> APIRouter:
             logger.exception("run_entry_failed", name=name)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    # -- Credential setup endpoints ------------------------------------------
+
+    @api_router.get("/entries/{name}/credentials/fields")
+    async def credential_fields(name: str) -> dict[str, Any]:
+        """Return credential field definitions for a plugin or skill."""
+        meta = _find_entry(state, name)
+
+        if isinstance(meta, PluginMeta):
+            if meta._setup_fn is not None:
+                return {
+                    "name": name,
+                    "gui_setup": False,
+                    "message": (f"This plugin requires CLI setup: bsage setup {name}"),
+                    "fields": [],
+                }
+            fields = meta.credentials or []
+            return {"name": name, "gui_setup": True, "message": None, "fields": fields}
+
+        # SkillMeta
+        if meta.credentials is None:
+            return {"name": name, "gui_setup": True, "message": None, "fields": []}
+
+        if isinstance(meta.credentials, dict):
+            if meta.credentials.get("setup_entrypoint"):
+                return {
+                    "name": name,
+                    "gui_setup": False,
+                    "message": (f"This skill requires CLI setup: bsage setup {name}"),
+                    "fields": [],
+                }
+            fields = meta.credentials.get("fields", [])
+            return {"name": name, "gui_setup": True, "message": None, "fields": fields}
+
+        return {"name": name, "gui_setup": True, "message": None, "fields": []}
+
+    @api_router.post("/entries/{name}/credentials")
+    async def store_credentials(name: str, body: CredentialStoreRequest) -> dict[str, Any]:
+        """Store credentials for a plugin or skill via the GUI."""
+        meta = _find_entry(state, name)
+
+        if isinstance(meta, PluginMeta) and meta._setup_fn is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="GUI setup not supported — use CLI: bsage setup " + name,
+            )
+        if (
+            isinstance(meta, SkillMeta)
+            and isinstance(meta.credentials, dict)
+            and meta.credentials.get("setup_entrypoint")
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="GUI setup not supported — use CLI: bsage setup " + name,
+            )
+
+        await state.credential_store.store(name, body.credentials)
+        logger.info("credentials_stored_via_gui", name=name)
+        return {"status": "ok", "name": name}
+
+    # -- Enable/Disable toggle -----------------------------------------------
+
+    @api_router.post("/entries/{name}/toggle")
+    async def toggle_entry(name: str) -> dict[str, Any]:
+        """Toggle enabled/disabled state for a plugin or skill."""
+        disabled: list[str] = list(state.runtime_config.disabled_entries)
+        if name in disabled:
+            disabled.remove(name)
+            enabled = True
+        else:
+            disabled.append(name)
+            enabled = False
+        state.runtime_config.update(disabled_entries=disabled)
+        logger.info("entry_toggled", name=name, enabled=enabled)
+        return {"name": name, "enabled": enabled}
+
+    # -- Vault browser -------------------------------------------------------
+
     @api_router.get("/vault/actions")
     async def list_actions() -> list[str]:
         notes = await state.vault.read_notes("actions")
         return [str(p.name) for p in notes]
 
+    @api_router.get("/vault/tree")
+    async def vault_tree() -> list[dict[str, Any]]:
+        """Return the vault directory tree structure."""
+        vault_root = state.vault.root
+
+        def _walk() -> list[dict[str, Any]]:
+            result: list[dict[str, Any]] = []
+            for dirpath, dirnames, filenames in os.walk(vault_root):
+                # Exclude hidden directories
+                dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+                rel = os.path.relpath(dirpath, vault_root)
+                if rel == ".":
+                    rel = ""
+                result.append(
+                    {
+                        "path": rel,
+                        "dirs": list(dirnames),
+                        "files": sorted(filenames),
+                    }
+                )
+            return result
+
+        return await asyncio.to_thread(_walk)
+
+    @api_router.get("/vault/file")
+    async def vault_file(
+        path: str = Query(..., description="Relative path within the vault"),
+    ) -> dict[str, Any]:
+        """Return the content of a vault file."""
+        try:
+            resolved = state.vault.resolve_path(path)
+        except VaultPathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if not resolved.is_file():
+            raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+        try:
+            content = await state.vault.read_note_content(resolved)
+        except OSError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        return {"path": path, "content": content}
+
+    # -- Config --------------------------------------------------------------
+
     @api_router.get("/config")
     async def get_config() -> dict[str, Any]:
         """Return current runtime config (api_key excluded)."""
-        return state.runtime_config.snapshot()
+        snap = state.runtime_config.snapshot()
+        snap["has_llm_api_key"] = bool(state.runtime_config.llm_api_key)
+        snap["has_embedding_api_key"] = bool(state.runtime_config.embedding_api_key)
+        return snap
 
     @api_router.patch("/config")
     async def update_config(update: ConfigUpdate) -> dict[str, Any]:
@@ -165,12 +328,18 @@ def create_routes(state: AppState) -> APIRouter:
             if field != "safe_mode" or update.safe_mode is not None
         }
         if not changes:
-            return state.runtime_config.snapshot()
+            snap = state.runtime_config.snapshot()
+            snap["has_llm_api_key"] = bool(state.runtime_config.llm_api_key)
+            snap["has_embedding_api_key"] = bool(state.runtime_config.embedding_api_key)
+            return snap
         try:
             state.runtime_config.update(**changes)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return state.runtime_config.snapshot()
+        snap = state.runtime_config.snapshot()
+        snap["has_llm_api_key"] = bool(state.runtime_config.llm_api_key)
+        snap["has_embedding_api_key"] = bool(state.runtime_config.embedding_api_key)
+        return snap
 
     @api_router.post("/chat")
     async def chat(body: ChatMessage) -> dict[str, str]:

@@ -1,9 +1,9 @@
-import { Brain, LayoutDashboard, MessageSquare, ScrollText, Settings } from "lucide-react";
+import { Brain, FolderOpen, LayoutDashboard, MessageSquare, Settings } from "lucide-react";
 
 const NAV_ITEMS = [
   { hash: "#/", icon: MessageSquare, label: "Chat" },
   { hash: "#/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { hash: "#/actions", icon: ScrollText, label: "Actions" },
+  { hash: "#/vault", icon: FolderOpen, label: "Vault" },
   { hash: "#/settings", icon: Settings, label: "Settings" },
 ];
 
