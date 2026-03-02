@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # Runtime
     safe_mode: bool = True
-    gateway_host: str = "127.0.0.1"
+    gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
     log_level: str = "info"
 
