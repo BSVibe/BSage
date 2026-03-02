@@ -76,6 +76,7 @@ function EntryCard({
   onRun: (name: string) => void;
   running: boolean;
 }) {
+  const needsSetup = entry.has_credentials && !entry.credentials_configured;
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800/50">
       <div className="flex items-start justify-between mb-2">
@@ -84,6 +85,11 @@ function EntryCard({
           <span className="text-xs text-gray-400">v{entry.version}</span>
         </div>
         <div className="flex items-center gap-1.5">
+          {needsSetup && (
+            <span className="text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 rounded-full px-1.5 py-0.5">
+              needs setup
+            </span>
+          )}
           {entry.is_dangerous && (
             <span className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 rounded-full px-1.5 py-0.5">
               dangerous
@@ -93,13 +99,19 @@ function EntryCard({
         </div>
       </div>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 line-clamp-2">{entry.description}</p>
-      <button
-        onClick={() => onRun(entry.name)}
-        disabled={running}
-        className="text-xs px-3 py-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors"
-      >
-        {running ? "Running..." : "Run"}
-      </button>
+      {needsSetup ? (
+        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-mono">
+          bsage setup {entry.name}
+        </span>
+      ) : (
+        <button
+          onClick={() => onRun(entry.name)}
+          disabled={running}
+          className="text-xs px-3 py-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors"
+        >
+          {running ? "Running..." : "Run"}
+        </button>
+      )}
     </div>
   );
 }

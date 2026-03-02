@@ -64,6 +64,8 @@ def mock_state():
     state.prompt_registry.get = MagicMock(return_value="You are BSage.")
     state.prompt_registry.render = MagicMock(return_value="Chat instructions here.")
     state.danger_map = {}
+    state.credential_store = MagicMock()
+    state.credential_store.list_services = MagicMock(return_value=[])
     state.retriever = MagicMock()
     state.retriever.rag_available = False
     return state
@@ -111,6 +113,73 @@ class TestSkillsEndpoint:
         assert "category" in skill
         assert "is_dangerous" in skill
         assert "description" in skill
+        assert "has_credentials" in skill
+        assert "credentials_configured" in skill
+
+
+class TestCredentialStatusInMeta:
+    """Test credential status fields in _meta_to_dict output."""
+
+    def test_skill_without_credentials_shows_configured(self, client) -> None:
+        response = client.get("/api/skills")
+        skill = response.json()[0]
+        assert skill["has_credentials"] is False
+        assert skill["credentials_configured"] is True
+
+    def test_plugin_with_credentials_unconfigured(self, client, mock_state) -> None:
+        from bsage.core.plugin_loader import PluginMeta
+
+        meta = PluginMeta(
+            name="email-input",
+            version="1.0.0",
+            category="input",
+            description="Email",
+            credentials=[
+                {"name": "email", "description": "Email", "required": True},
+            ],
+        )
+        mock_state.plugin_loader.load_all = AsyncMock(return_value={"email-input": meta})
+        mock_state.credential_store.list_services = MagicMock(return_value=[])
+
+        response = client.get("/api/plugins")
+        plugin = response.json()[0]
+        assert plugin["has_credentials"] is True
+        assert plugin["credentials_configured"] is False
+
+    def test_plugin_with_credentials_configured(self, client, mock_state) -> None:
+        from bsage.core.plugin_loader import PluginMeta
+
+        meta = PluginMeta(
+            name="email-input",
+            version="1.0.0",
+            category="input",
+            description="Email",
+            credentials=[
+                {"name": "email", "description": "Email", "required": True},
+            ],
+        )
+        mock_state.plugin_loader.load_all = AsyncMock(return_value={"email-input": meta})
+        mock_state.credential_store.list_services = MagicMock(return_value=["email-input"])
+
+        response = client.get("/api/plugins")
+        plugin = response.json()[0]
+        assert plugin["has_credentials"] is True
+        assert plugin["credentials_configured"] is True
+
+    def test_skill_with_dict_credentials_fields(self, client, mock_state) -> None:
+        meta = _make_meta(
+            name="custom-skill",
+            credentials={
+                "fields": [{"name": "token", "description": "API token", "required": True}],
+            },
+        )
+        mock_state.skill_loader.load_all = AsyncMock(return_value={"custom-skill": meta})
+        mock_state.credential_store.list_services = MagicMock(return_value=[])
+
+        response = client.get("/api/skills")
+        skill = response.json()[0]
+        assert skill["has_credentials"] is True
+        assert skill["credentials_configured"] is False
 
 
 class TestRunSkillEndpoint:

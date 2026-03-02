@@ -21,6 +21,7 @@ class TestEventType:
         assert EventType.TRIGGER_FIRED.value == "trigger_fired"
         assert EventType.TOOL_CALL_START.value == "tool_call_start"
         assert EventType.INPUT_RECEIVED.value == "input_received"
+        assert EventType.CREDENTIAL_SETUP_REQUIRED.value == "credential_setup_required"
 
 
 class TestEvent:

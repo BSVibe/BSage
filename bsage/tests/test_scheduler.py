@@ -342,6 +342,92 @@ class TestSchedulerProcessTrigger:
         mock_agent_loop.write_action.assert_not_called()
 
 
+class TestSchedulerMissingCredentials:
+    """Test graceful handling of MissingCredentialError."""
+
+    async def test_input_trigger_skips_on_missing_credentials(
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
+    ) -> None:
+        from bsage.core.plugin_runner import MissingCredentialError
+
+        mock_runner.run = AsyncMock(side_effect=MissingCredentialError("missing creds"))
+        scheduler = Scheduler(
+            agent_loop=mock_agent_loop,
+            runner=mock_runner,
+            safe_mode_guard=mock_safe_mode_guard,
+        )
+        await scheduler._on_input_trigger("calendar-input")
+
+        mock_agent_loop.on_input.assert_not_called()
+
+    async def test_process_trigger_skips_on_missing_credentials(
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
+    ) -> None:
+        from bsage.core.plugin_runner import MissingCredentialError
+
+        mock_runner.run = AsyncMock(side_effect=MissingCredentialError("missing creds"))
+        scheduler = Scheduler(
+            agent_loop=mock_agent_loop,
+            runner=mock_runner,
+            safe_mode_guard=mock_safe_mode_guard,
+        )
+        await scheduler._on_process_trigger("weekly-digest")
+
+        mock_agent_loop.write_action.assert_not_called()
+
+    async def test_input_trigger_emits_credential_setup_required(
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
+    ) -> None:
+        from bsage.core.events import EventBus, EventType
+        from bsage.core.plugin_runner import MissingCredentialError
+
+        mock_runner.run = AsyncMock(side_effect=MissingCredentialError("missing creds"))
+        event_bus = EventBus()
+        sub = AsyncMock()
+        event_bus.subscribe(sub)
+
+        scheduler = Scheduler(
+            agent_loop=mock_agent_loop,
+            runner=mock_runner,
+            safe_mode_guard=mock_safe_mode_guard,
+            event_bus=event_bus,
+        )
+        await scheduler._on_input_trigger("calendar-input")
+
+        events = [c.args[0] for c in sub.on_event.call_args_list]
+        assert any(
+            e.event_type == EventType.CREDENTIAL_SETUP_REQUIRED
+            and e.payload["name"] == "calendar-input"
+            for e in events
+        )
+
+    async def test_process_trigger_emits_credential_setup_required(
+        self, mock_agent_loop, mock_runner, mock_safe_mode_guard
+    ) -> None:
+        from bsage.core.events import EventBus, EventType
+        from bsage.core.plugin_runner import MissingCredentialError
+
+        mock_runner.run = AsyncMock(side_effect=MissingCredentialError("missing creds"))
+        event_bus = EventBus()
+        sub = AsyncMock()
+        event_bus.subscribe(sub)
+
+        scheduler = Scheduler(
+            agent_loop=mock_agent_loop,
+            runner=mock_runner,
+            safe_mode_guard=mock_safe_mode_guard,
+            event_bus=event_bus,
+        )
+        await scheduler._on_process_trigger("weekly-digest")
+
+        events = [c.args[0] for c in sub.on_event.call_args_list]
+        assert any(
+            e.event_type == EventType.CREDENTIAL_SETUP_REQUIRED
+            and e.payload["name"] == "weekly-digest"
+            for e in events
+        )
+
+
 class TestSchedulerEvents:
     """Test EventBus emission from Scheduler."""
 

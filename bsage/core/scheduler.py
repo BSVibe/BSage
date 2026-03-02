@@ -10,6 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from bsage.core.events import emit_event
+from bsage.core.plugin_runner import MissingCredentialError
 
 if TYPE_CHECKING:
     from bsage.core.events import EventBus
@@ -158,6 +159,17 @@ class Scheduler:
             meta = self._agent_loop.get_entry(name)
             result = await self._runner.run(meta, context)
             await self._agent_loop.on_input(name, result)
+        except MissingCredentialError:
+            logger.warning(
+                "trigger_skipped_missing_credentials",
+                name=name,
+                hint=f"Run: bsage setup {name}",
+            )
+            await emit_event(
+                self._event_bus,
+                "CREDENTIAL_SETUP_REQUIRED",
+                {"name": name, "category": "input"},
+            )
         except Exception:
             logger.exception("trigger_execution_failed", name=name)
 
@@ -181,5 +193,16 @@ class Scheduler:
             result = await self._runner.run(meta, context)
             summary = json.dumps(result, default=str)
             await self._agent_loop.write_action(name, summary)
+        except MissingCredentialError:
+            logger.warning(
+                "trigger_skipped_missing_credentials",
+                name=name,
+                hint=f"Run: bsage setup {name}",
+            )
+            await emit_event(
+                self._event_bus,
+                "CREDENTIAL_SETUP_REQUIRED",
+                {"name": name, "category": "process"},
+            )
         except Exception:
             logger.exception("trigger_execution_failed", name=name)

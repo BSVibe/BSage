@@ -5,6 +5,8 @@ export interface EntryMeta {
   category: "input" | "process" | "output";
   is_dangerous: boolean;
   description: string;
+  has_credentials: boolean;
+  credentials_configured: boolean;
 }
 
 /** POST /api/chat request body. */

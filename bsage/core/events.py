@@ -45,6 +45,9 @@ class EventType(Enum):
     INPUT_RECEIVED = "input_received"
     INPUT_COMPLETE = "input_complete"
 
+    # Credentials
+    CREDENTIAL_SETUP_REQUIRED = "credential_setup_required"
+
 
 @dataclass
 class Event:

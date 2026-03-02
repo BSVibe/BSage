@@ -35,14 +35,29 @@ class ConfigUpdate(BaseModel):
     safe_mode: bool | None = None
 
 
-def _meta_to_dict(meta: Any, danger_map: dict[str, bool] | None = None) -> dict[str, Any]:
+def _meta_to_dict(
+    meta: Any,
+    danger_map: dict[str, bool] | None = None,
+    configured_services: list[str] | None = None,
+) -> dict[str, Any]:
     """Serialize a PluginMeta or SkillMeta to a JSON-safe dict."""
+    creds = meta.credentials
+    if isinstance(creds, list):
+        has_credentials = bool(creds)
+    elif isinstance(creds, dict):
+        has_credentials = bool(creds.get("fields"))
+    else:
+        has_credentials = False
     return {
         "name": meta.name,
         "version": meta.version,
         "category": meta.category,
         "is_dangerous": (danger_map or {}).get(meta.name, False),
         "description": meta.description,
+        "has_credentials": has_credentials,
+        "credentials_configured": (
+            meta.name in (configured_services or []) if has_credentials else True
+        ),
     }
 
 
@@ -58,13 +73,15 @@ def create_routes(state: AppState) -> APIRouter:
     async def list_plugins() -> list[dict[str, Any]]:
         """List all loaded Plugins (code-based)."""
         registry = await state.plugin_loader.load_all()
-        return [_meta_to_dict(meta, state.danger_map) for meta in registry.values()]
+        configured = state.credential_store.list_services()
+        return [_meta_to_dict(meta, state.danger_map, configured) for meta in registry.values()]
 
     @api_router.get("/skills")
     async def list_skills() -> list[dict[str, Any]]:
         """List all loaded Skills (LLM-based)."""
         registry = await state.skill_loader.load_all()
-        return [_meta_to_dict(meta, state.danger_map) for meta in registry.values()]
+        configured = state.credential_store.list_services()
+        return [_meta_to_dict(meta, state.danger_map, configured) for meta in registry.values()]
 
     @api_router.post("/plugins/{name}/run")
     async def run_plugin(name: str) -> dict[str, Any]:

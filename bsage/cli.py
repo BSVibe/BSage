@@ -22,6 +22,11 @@ from bsage.core.skill_loader import SkillLoader, SkillMeta
 from bsage.garden.vault import Vault
 
 
+def _connect_host(host: str) -> str:
+    """Convert a listen address to a connect address (0.0.0.0 → 127.0.0.1)."""
+    return "127.0.0.1" if host == "0.0.0.0" else host
+
+
 def _validate_skill_name(name: str) -> str:
     """Validate a skill name matches the required pattern."""
     if not re.match(r"^[a-z][a-z0-9-]*$", name):
@@ -44,7 +49,7 @@ _SERVER_READY_TIMEOUT = 10
 def run(no_chat: bool) -> None:
     """Start the BSage Gateway server and enter interactive chat."""
     settings = get_settings()
-    base_url = f"http://{settings.gateway_host}:{settings.gateway_port}"
+    base_url = f"http://{_connect_host(settings.gateway_host)}:{settings.gateway_port}"
 
     click.echo(f"Starting BSage Gateway on {settings.gateway_host}:{settings.gateway_port}")
 
@@ -159,7 +164,8 @@ def init() -> None:
 def skills(host: str | None, port: int | None) -> None:
     """List all loaded skills from the Gateway."""
     settings = get_settings()
-    base_url = f"http://{host or settings.gateway_host}:{port or settings.gateway_port}"
+    h = _connect_host(host or settings.gateway_host)
+    base_url = f"http://{h}:{port or settings.gateway_port}"
 
     try:
         response = httpx.get(f"{base_url}/api/skills", timeout=5.0)
@@ -189,7 +195,8 @@ def run_skill(name: str, host: str | None, port: int | None) -> None:
     """Run a specific skill by name."""
     _validate_skill_name(name)
     settings = get_settings()
-    base_url = f"http://{host or settings.gateway_host}:{port or settings.gateway_port}"
+    h = _connect_host(host or settings.gateway_host)
+    base_url = f"http://{h}:{port or settings.gateway_port}"
 
     try:
         response = httpx.post(f"{base_url}/api/run/{name}", timeout=30.0)
@@ -397,7 +404,8 @@ def reindex(dirs: str | None) -> None:
 def health(host: str | None, port: int | None) -> None:
     """Check Gateway health status."""
     settings = get_settings()
-    base_url = f"http://{host or settings.gateway_host}:{port or settings.gateway_port}"
+    h = _connect_host(host or settings.gateway_host)
+    base_url = f"http://{h}:{port or settings.gateway_port}"
 
     try:
         response = httpx.get(f"{base_url}/api/health", timeout=5.0)
