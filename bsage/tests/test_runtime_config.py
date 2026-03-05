@@ -1,11 +1,20 @@
 """Tests for bsage.core.runtime_config — mutable runtime settings."""
 
 import json
+from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from bsage.core.runtime_config import RuntimeConfig
+
+
+@dataclass
+class _FakeMeta:
+    """Minimal metadata stub for rebuild_enabled tests."""
+
+    name: str
+    credentials: list[dict] | None = None
 
 
 def _cfg(**overrides: object) -> RuntimeConfig:
@@ -284,3 +293,76 @@ class TestDisabledEntries:
 
         data = json.loads(persist_path.read_text())
         assert data["disabled_entries"] == ["a", "b"]
+
+
+class TestRebuildEnabled:
+    """Test rebuild_enabled computes enabled_entries correctly."""
+
+    def _make_cred_store(self, configured: list[str]) -> MagicMock:
+        store = MagicMock()
+        store.list_services.return_value = configured
+        return store
+
+    def test_excludes_disabled_entries(self) -> None:
+        config = _cfg(disabled_entries=["plugin-a"])
+        registry = {
+            "plugin-a": _FakeMeta(name="plugin-a"),
+            "plugin-b": _FakeMeta(name="plugin-b"),
+        }
+        config.rebuild_enabled(registry, self._make_cred_store([]))
+        assert "plugin-a" not in config.enabled_entries
+        assert "plugin-b" in config.enabled_entries
+
+    def test_excludes_unconfigured_required_credentials(self) -> None:
+        config = _cfg()
+        registry = {
+            "needs-creds": _FakeMeta(
+                name="needs-creds",
+                credentials=[{"name": "api_key", "required": True}],
+            ),
+        }
+        config.rebuild_enabled(registry, self._make_cred_store([]))
+        assert "needs-creds" not in config.enabled_entries
+
+    def test_includes_configured_credentials(self) -> None:
+        config = _cfg()
+        registry = {
+            "has-creds": _FakeMeta(
+                name="has-creds",
+                credentials=[{"name": "api_key", "required": True}],
+            ),
+        }
+        config.rebuild_enabled(registry, self._make_cred_store(["has-creds"]))
+        assert "has-creds" in config.enabled_entries
+
+    def test_includes_no_credentials_required(self) -> None:
+        config = _cfg()
+        registry = {"no-creds": _FakeMeta(name="no-creds")}
+        config.rebuild_enabled(registry, self._make_cred_store([]))
+        assert "no-creds" in config.enabled_entries
+
+    def test_includes_optional_credentials_only(self) -> None:
+        config = _cfg()
+        registry = {
+            "optional-creds": _FakeMeta(
+                name="optional-creds",
+                credentials=[{"name": "token", "required": False}],
+            ),
+        }
+        config.rebuild_enabled(registry, self._make_cred_store([]))
+        assert "optional-creds" in config.enabled_entries
+
+    def test_enabled_entries_not_persisted(self, tmp_path) -> None:
+        persist_path = tmp_path / "config.json"
+        config = _cfg(persist_path=persist_path)
+        registry = {"plugin-a": _FakeMeta(name="plugin-a")}
+        config.rebuild_enabled(registry, self._make_cred_store([]))
+
+        # Trigger a persist via update
+        config.update(safe_mode=False)
+        data = json.loads(persist_path.read_text())
+        assert "enabled_entries" not in data
+
+    def test_initial_enabled_entries_is_empty(self) -> None:
+        config = _cfg()
+        assert config.enabled_entries == set()

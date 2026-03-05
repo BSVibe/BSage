@@ -20,6 +20,7 @@ from bsage.garden.writer import WRITE_NOTE_TOOL, WRITE_SEED_TOOL, GardenWriter
 if TYPE_CHECKING:
     from bsage.core.events import EventBus
     from bsage.core.plugin_loader import PluginMeta
+    from bsage.core.runtime_config import RuntimeConfig
     from bsage.core.skill_loader import SkillMeta
 
 logger = structlog.get_logger(__name__)
@@ -44,6 +45,7 @@ class AgentLoop:
         prompt_registry: PromptRegistry | None = None,
         event_bus: EventBus | None = None,
         on_refresh: Callable[[], Awaitable[None]] | None = None,
+        runtime_config: RuntimeConfig | None = None,
     ) -> None:
         self._registry = registry
         self._runner = runner
@@ -54,6 +56,7 @@ class AgentLoop:
         self._prompt_registry = prompt_registry
         self._event_bus = event_bus
         self._on_refresh = on_refresh
+        self._runtime_config = runtime_config
 
     # ------------------------------------------------------------------
     # Public API
@@ -146,12 +149,19 @@ class AgentLoop:
     # ------------------------------------------------------------------
 
     def _build_tools(self) -> list[dict]:
-        """Build OpenAI-format tool definitions including built-in and plugin tools."""
+        """Build OpenAI-format tool definitions including built-in and plugin tools.
+
+        Only plugins present in ``runtime_config.enabled_entries`` are exposed.
+        When no runtime_config is set, all eligible plugins are included.
+        """
         from bsage.core.plugin_loader import PluginMeta
 
+        enabled = self._runtime_config.enabled_entries if self._runtime_config else None
         tools: list[dict] = [WRITE_NOTE_TOOL, WRITE_SEED_TOOL]
         for meta in self._registry.values():
             if isinstance(meta, PluginMeta) and meta.category == "process" and meta.input_schema:
+                if enabled is not None and meta.name not in enabled:
+                    continue
                 tools.append(
                     {
                         "type": "function",

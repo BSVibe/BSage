@@ -212,6 +212,10 @@ def create_routes(state: AppState) -> APIRouter:
 
         await state.credential_store.store(name, body.credentials)
         logger.info("credentials_stored_via_gui", name=name)
+        if state.agent_loop:
+            state.runtime_config.rebuild_enabled(
+                state.agent_loop._registry, state.credential_store
+            )
         return {"status": "ok", "name": name}
 
     # -- Enable/Disable toggle -----------------------------------------------
@@ -227,6 +231,10 @@ def create_routes(state: AppState) -> APIRouter:
             disabled.append(name)
             enabled = False
         state.runtime_config.update(disabled_entries=disabled)
+        if state.agent_loop:
+            state.runtime_config.rebuild_enabled(
+                state.agent_loop._registry, state.credential_store
+            )
         logger.info("entry_toggled", name=name, enabled=enabled)
         return {"name": name, "enabled": enabled}
 

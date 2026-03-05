@@ -188,7 +188,10 @@ class AppState:
             notification=notification_router,
             event_bus=self.event_bus,
             on_refresh=self._refresh_registry,
+            runtime_config=self.runtime_config,
         )
+
+        self.runtime_config.rebuild_enabled(registry, self.credential_store)
 
         notification_router.setup(
             registry=registry,
@@ -269,6 +272,10 @@ class AppState:
             registry=self.agent_loop._registry,
             runner=self.runner,
             context_builder=self.agent_loop.build_context,
+        )
+
+        self.runtime_config.rebuild_enabled(
+            self.agent_loop._registry, self.credential_store
         )
 
         logger.info(

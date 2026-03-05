@@ -316,6 +316,41 @@ class TestBuildTools:
             assert "parameters" in tool["function"]
 
 
+class TestBuildToolsFiltering:
+    """Test _build_tools respects enabled_entries from RuntimeConfig."""
+
+    async def test_excludes_disabled_plugin(self, mock_deps) -> None:
+        rc = MagicMock()
+        rc.enabled_entries = {"other-plugin"}  # tool-plugin NOT in enabled set
+        loop = AgentLoop(**mock_deps, runtime_config=rc)
+        tools = loop._build_tools()
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "tool-plugin" not in tool_names
+
+    async def test_includes_enabled_plugin(self, mock_deps) -> None:
+        rc = MagicMock()
+        rc.enabled_entries = {"tool-plugin"}
+        loop = AgentLoop(**mock_deps, runtime_config=rc)
+        tools = loop._build_tools()
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "tool-plugin" in tool_names
+
+    async def test_no_runtime_config_includes_all(self, mock_deps) -> None:
+        loop = AgentLoop(**mock_deps, runtime_config=None)
+        tools = loop._build_tools()
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "tool-plugin" in tool_names
+
+    async def test_always_includes_builtin_tools(self, mock_deps) -> None:
+        rc = MagicMock()
+        rc.enabled_entries = set()  # nothing enabled
+        loop = AgentLoop(**mock_deps, runtime_config=rc)
+        tools = loop._build_tools()
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "write-note" in tool_names
+        assert "write-seed" in tool_names
+
+
 class TestHandleToolCall:
     """Test _handle_tool_call execution."""
 

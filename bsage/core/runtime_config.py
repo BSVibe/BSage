@@ -21,6 +21,7 @@ import structlog
 
 if TYPE_CHECKING:
     from bsage.core.config import Settings
+    from bsage.core.credential_store import CredentialStore
 
 logger = structlog.get_logger(__name__)
 
@@ -67,6 +68,7 @@ class RuntimeConfig:
         self._lock = threading.Lock()
         self._state = _ConfigState(**fields)
         self._persist_path = persist_path
+        self._enabled_entries: set[str] = set()
 
     # -- thread-safe attribute access ----------------------------------------
 
@@ -76,6 +78,39 @@ class RuntimeConfig:
             with self._lock:
                 return getattr(self._state, name)
         raise AttributeError(f"RuntimeConfig has no attribute '{name}'")
+
+    @property
+    def enabled_entries(self) -> set[str]:
+        """Return the current set of enabled entry names (thread-safe)."""
+        with self._lock:
+            return set(self._enabled_entries)
+
+    def rebuild_enabled(
+        self,
+        registry: dict[str, Any],
+        credential_store: CredentialStore,
+    ) -> None:
+        """Recompute enabled entries from registry, disabled list, and credentials.
+
+        An entry is enabled when it is NOT in ``disabled_entries`` and, if it
+        declares required credentials, those credentials have been configured.
+        """
+        configured = set(credential_store.list_services())
+        with self._lock:
+            disabled = set(self._state.disabled_entries)
+        enabled: set[str] = set()
+        for name, meta in registry.items():
+            if name in disabled:
+                continue
+            creds = getattr(meta, "credentials", None)
+            if isinstance(creds, list) and creds:
+                required = [f["name"] for f in creds if f.get("required", True)]
+                if required and name not in configured:
+                    continue
+            enabled.add(name)
+        with self._lock:
+            self._enabled_entries = enabled
+        logger.info("enabled_entries_rebuilt", count=len(enabled))
 
     # -- mutations -----------------------------------------------------------
 
