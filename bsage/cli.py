@@ -41,7 +41,7 @@ def main() -> None:
 
 
 _SERVER_READY_POLL_INTERVAL = 0.2
-_SERVER_READY_TIMEOUT = 10
+_SERVER_READY_TIMEOUT = 30
 
 
 @main.command()
@@ -66,7 +66,12 @@ def run(no_chat: bool) -> None:
         server.run()
         return
 
-    thread = threading.Thread(target=server.run, daemon=True)
+    def _run_server() -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(server.serve())
+
+    thread = threading.Thread(target=_run_server, daemon=True)
     thread.start()
 
     if not _wait_for_server(base_url):

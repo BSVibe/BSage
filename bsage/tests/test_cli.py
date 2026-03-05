@@ -1,6 +1,6 @@
 """Tests for bsage.cli — Click CLI commands."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -47,6 +47,7 @@ class TestRunCommand:
     ) -> None:
         mock_settings.return_value = _mock_settings()
         mock_server = MagicMock()
+        mock_server.serve = AsyncMock()
         mock_uvicorn.Server.return_value = mock_server
         mock_uvicorn.Config.return_value = MagicMock()
 
@@ -64,6 +65,7 @@ class TestRunCommand:
     ) -> None:
         mock_settings.return_value = _mock_settings()
         mock_server = MagicMock()
+        mock_server.serve = AsyncMock()
         mock_uvicorn.Server.return_value = mock_server
         mock_uvicorn.Config.return_value = MagicMock()
 
@@ -84,7 +86,7 @@ class TestWaitForServer:
 
         assert _wait_for_server("http://localhost:8000") is True
 
-    @patch("bsage.cli.time.monotonic", side_effect=[0, 0.5, 1.0, 11.0])
+    @patch("bsage.cli.time.monotonic", side_effect=[0, 0.5, 1.0, 31.0])
     @patch("bsage.cli.time.sleep")
     @patch("bsage.cli.httpx.get", side_effect=httpx.ConnectError("refused"))
     def test_returns_false_on_timeout(self, mock_get, mock_sleep, mock_time) -> None:
