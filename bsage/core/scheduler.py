@@ -222,6 +222,9 @@ class Scheduler:
             context = self._agent_loop.build_context()
             meta = self._agent_loop.get_entry(name)
             result = await self._runner.run(meta, context)
+            if result.get("collected", 1) == 0:
+                logger.debug("trigger_no_new_data", name=name)
+                return
             await self._agent_loop.on_input(name, result)
         except MissingCredentialError:
             logger.warning(
