@@ -49,7 +49,7 @@ def _parse_update(update: dict) -> dict | None:
     version="1.1.0",
     category="input",
     description="Polls Telegram Bot API for new messages and stores them in the vault",
-    trigger={"type": "cron", "schedule": "*/5 * * * *"},
+    trigger={"type": "polling"},
     credentials=[
         {"name": "bot_token", "description": "Telegram Bot API token", "required": True},
         {"name": "chat_id", "description": "Target chat ID for notifications", "required": True},

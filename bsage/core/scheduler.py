@@ -1,7 +1,8 @@
-"""Scheduler — registers cron triggers for input and process plugins/skills via APScheduler."""
+"""Scheduler — registers cron and polling triggers for plugins/skills via APScheduler."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +22,9 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _CRON_FIELDS = ("minute", "hour", "day", "month", "day_of_week")
+_POLLING_BACKOFF_INITIAL = 2.0
+_POLLING_BACKOFF_MAX = 60.0
+_POLLING_BACKOFF_FACTOR = 1.8
 
 
 class Scheduler:
@@ -39,11 +43,21 @@ class Scheduler:
         self._event_bus = event_bus
         self._scheduler = AsyncIOScheduler()
         self._jobs: dict[str, str] = {}  # name -> job_id
+        self._polling_tasks: dict[str, asyncio.Task] = {}  # name -> asyncio.Task
 
     def register_triggers(self, registry: dict[str, Any]) -> None:
-        """Register cron triggers for input and process plugins/skills."""
+        """Register cron and polling triggers for input and process plugins/skills."""
         for name, meta in registry.items():
-            if not meta.trigger or meta.trigger.get("type") != "cron":
+            if not meta.trigger:
+                continue
+
+            trigger_type = meta.trigger.get("type")
+
+            if trigger_type == "polling":
+                self._register_polling(name, meta)
+                continue
+
+            if trigger_type != "cron":
                 continue
 
             if meta.category == "input":
@@ -76,16 +90,25 @@ class Scheduler:
             logger.info("trigger_registered", name=name, schedule=schedule)
 
     def register_new_triggers(self, new_entries: dict[str, Any]) -> None:
-        """Register cron triggers for newly discovered entries only.
+        """Register cron/polling triggers for newly discovered entries only.
 
         Unlike ``register_triggers()``, this method skips entries
         that already have a registered job, making it safe to call
         repeatedly with incremental additions.
         """
         for name, meta in new_entries.items():
-            if name in self._jobs:
+            if name in self._jobs or name in self._polling_tasks:
                 continue
-            if not meta.trigger or meta.trigger.get("type") != "cron":
+            if not meta.trigger:
+                continue
+
+            trigger_type = meta.trigger.get("type")
+
+            if trigger_type == "polling":
+                self._register_polling(name, meta)
+                continue
+
+            if trigger_type != "cron":
                 continue
 
             if meta.category == "input":
