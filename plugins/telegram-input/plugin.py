@@ -67,13 +67,13 @@ async def execute(context) -> dict:
     state_file = _state_path(context)
     last_offset = _load_offset(state_file)
 
-    params: dict = {"limit": 100, "timeout": 5}
+    params: dict = {"limit": 100, "timeout": 30}
     if last_offset is not None:
         params["offset"] = last_offset + 1
 
     url = f"{TELEGRAM_API.format(token=bot_token)}/getUpdates"
     async with httpx.AsyncClient() as client:
-        resp = await client.get(url, params=params, timeout=30.0)
+        resp = await client.get(url, params=params, timeout=60.0)
         resp.raise_for_status()
         data = resp.json()
 
