@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -14,8 +15,16 @@ from bsage.core.exceptions import MissingCredentialError
 from bsage.core.prompt_registry import PromptRegistry
 from bsage.core.runner import Runner
 from bsage.core.safe_mode import SafeModeGuard
-from bsage.core.skill_context import LLMClient, SkillContext
-from bsage.garden.writer import WRITE_NOTE_TOOL, WRITE_SEED_TOOL, GardenWriter
+from bsage.core.skill_context import LLMClient, SchedulerInterface, SkillContext
+from bsage.garden.writer import (
+    APPEND_NOTE_TOOL,
+    DELETE_NOTE_TOOL,
+    SEARCH_VAULT_TOOL,
+    UPDATE_NOTE_TOOL,
+    WRITE_NOTE_TOOL,
+    WRITE_SEED_TOOL,
+    GardenWriter,
+)
 
 if TYPE_CHECKING:
     from bsage.core.events import EventBus
@@ -47,6 +56,7 @@ class AgentLoop:
         on_refresh: Callable[[], Awaitable[None]] | None = None,
         runtime_config: RuntimeConfig | None = None,
         retriever: VaultRetriever | None = None,
+        scheduler_adapter: SchedulerInterface | None = None,
     ) -> None:
         self._registry = registry
         self._runner = runner
@@ -58,6 +68,7 @@ class AgentLoop:
         self._on_refresh = on_refresh
         self._runtime_config = runtime_config
         self._retriever = retriever
+        self._scheduler_adapter = scheduler_adapter
 
     # ------------------------------------------------------------------
     # Public API
@@ -158,7 +169,14 @@ class AgentLoop:
         from bsage.core.plugin_loader import PluginMeta
 
         enabled = self._runtime_config.enabled_entries if self._runtime_config else None
-        tools: list[dict] = [WRITE_NOTE_TOOL, WRITE_SEED_TOOL]
+        tools: list[dict] = [
+            WRITE_NOTE_TOOL,
+            WRITE_SEED_TOOL,
+            UPDATE_NOTE_TOOL,
+            APPEND_NOTE_TOOL,
+            DELETE_NOTE_TOOL,
+            SEARCH_VAULT_TOOL,
+        ]
         for meta in self._registry.values():
             if isinstance(meta, PluginMeta) and meta.category == "process" and meta.input_schema:
                 if enabled is not None and meta.name not in enabled:
@@ -175,44 +193,60 @@ class AgentLoop:
                 )
         return tools
 
+    @cached_property
+    def _builtin_handlers(self) -> dict[str, Callable[[dict[str, Any]], Awaitable[Any]]]:
+        """Map built-in tool names to their handler functions.
+
+        Each handler takes ``args`` and returns a result (dict or str).
+        The dispatch loop in ``_handle_tool_call`` wraps the common
+        action-log / event / error-handling logic around every handler.
+        """
+        return {
+            "write-note": self._garden_writer.handle_write_note,
+            "write-seed": self._garden_writer.handle_write_seed,
+            "update-note": self._garden_writer.handle_update_note,
+            "append-note": self._garden_writer.handle_append_note,
+            "delete-note": self._garden_writer.handle_delete_note,
+            "search-vault": self._handle_search_vault,
+        }
+
+    async def _handle_search_vault(self, args: dict[str, Any]) -> dict[str, Any] | str:
+        """Handle a search-vault tool call."""
+        query = args["query"]
+        dirs = args.get("context_dirs")
+        max_results = args.get("max_results", 10)
+        if self._retriever:
+            from bsage.core.skill_context import RetrieverAdapter
+
+            adapter = RetrieverAdapter(self._retriever)
+            return await adapter.search(query, context_dirs=dirs, top_k=max_results)
+        return "(search not available — embedding model not configured)"
+
     async def _handle_tool_call(self, tool_call_id: str, name: str, args: dict[str, Any]) -> str:
         """Execute an entry triggered by an LLM tool call.
 
-        Built-in tools (write-note, write-seed) are handled directly.
+        Built-in tools are dispatched via ``_builtin_handlers()``.
         Plugin tools go through SafeMode → Runner.run() → action log.
         """
         await emit_event(
             self._event_bus, "TOOL_CALL_START", {"tool_call_id": tool_call_id, "name": name}
         )
 
-        if name == "write-note":
+        handler = self._builtin_handlers.get(name)
+        if handler is not None:
             try:
-                result = await self._garden_writer.handle_write_note(args)
-                summary = json.dumps(result, default=str)[:200]
-                await self._garden_writer.write_action("write-note", summary)
+                result = await handler(args)
+                result_str = result if isinstance(result, str) else json.dumps(result, default=str)
+                summary = result_str[:200]
+                await self._garden_writer.write_action(name, summary)
                 await emit_event(
                     self._event_bus,
                     "TOOL_CALL_COMPLETE",
                     {"tool_call_id": tool_call_id, "name": name},
                 )
-                return json.dumps(result, default=str)
+                return result_str
             except Exception as exc:
-                logger.exception("write_note_failed")
-                return json.dumps({"error": str(exc)})
-
-        if name == "write-seed":
-            try:
-                result = await self._garden_writer.handle_write_seed(args)
-                summary = json.dumps(result, default=str)[:200]
-                await self._garden_writer.write_action("write-seed", summary)
-                await emit_event(
-                    self._event_bus,
-                    "TOOL_CALL_COMPLETE",
-                    {"tool_call_id": tool_call_id, "name": name},
-                )
-                return json.dumps(result, default=str)
-            except Exception as exc:
-                logger.exception("write_seed_failed")
+                logger.exception("builtin_tool_failed", tool=name)
                 return json.dumps({"error": str(exc)})
 
         meta = self._registry.get(name)
@@ -246,9 +280,7 @@ class AgentLoop:
     # On-demand routing via tool use
     # ------------------------------------------------------------------
 
-    async def _decide_on_demand(
-        self, source_name: str, raw_data: dict[str, Any]
-    ) -> list[dict]:
+    async def _decide_on_demand(self, source_name: str, raw_data: dict[str, Any]) -> list[dict]:
         """Let LLM decide and execute on-demand entries via tool use.
 
         If on-demand plugins have input_schema, uses tool use so the LLM
@@ -405,6 +437,18 @@ class AgentLoop:
                 retriever=self._retriever,
                 reply_fn=reply_fn,
             )
+        retriever_adapter = None
+        if self._retriever:
+            from bsage.core.skill_context import RetrieverAdapter
+
+            retriever_adapter = RetrieverAdapter(self._retriever)
+
+        event_emitter = None
+        if self._event_bus:
+            from bsage.core.events import EventEmitterAdapter
+
+            event_emitter = EventEmitterAdapter(self._event_bus)
+
         return SkillContext(
             garden=self._garden_writer,
             llm=self._llm_client,
@@ -412,6 +456,9 @@ class AgentLoop:
             logger=structlog.get_logger("skill"),
             input_data=input_data,
             chat=chat_bridge,
+            retriever=retriever_adapter,
+            scheduler=self._scheduler_adapter,
+            events=event_emitter,
         )
 
     def _make_reply_fn(self, source_name: str) -> ReplyFn | None:

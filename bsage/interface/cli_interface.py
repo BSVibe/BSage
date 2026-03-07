@@ -36,5 +36,3 @@ class CLIApprovalInterface:
         )
 
         return approved
-
-

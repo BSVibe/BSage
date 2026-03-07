@@ -157,9 +157,12 @@ class TestChatRepl:
         original_chat = chat_bridge.chat
 
         def _capture(**kwargs):
-            captured_calls.append({
-                "message": kwargs["message"], "history": list(kwargs["history"]),
-            })
+            captured_calls.append(
+                {
+                    "message": kwargs["message"],
+                    "history": list(kwargs["history"]),
+                }
+            )
             return original_chat(**kwargs)
 
         chat_bridge.chat = _capture
@@ -205,9 +208,12 @@ class TestChatRepl:
         original_chat = chat_bridge.chat
 
         def _capture(**kwargs):
-            captured_calls.append({
-                "message": kwargs["message"], "history": list(kwargs["history"]),
-            })
+            captured_calls.append(
+                {
+                    "message": kwargs["message"],
+                    "history": list(kwargs["history"]),
+                }
+            )
             return original_chat(**kwargs)
 
         chat_bridge.chat = _capture

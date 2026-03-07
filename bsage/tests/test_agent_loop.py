@@ -277,14 +277,18 @@ class TestBuildTools:
         tool_names = [t["function"]["name"] for t in tools]
         assert "write-note" in tool_names
 
-    async def test_includes_write_note_even_with_empty_registry(self, mock_deps) -> None:
+    async def test_includes_all_builtin_tools_with_empty_registry(self, mock_deps) -> None:
         mock_deps["registry"] = {}
         loop = _make_loop(mock_deps)
         tools = loop._build_tools()
-        assert len(tools) == 2
         tool_names = [t["function"]["name"] for t in tools]
         assert "write-note" in tool_names
         assert "write-seed" in tool_names
+        assert "update-note" in tool_names
+        assert "append-note" in tool_names
+        assert "delete-note" in tool_names
+        assert "search-vault" in tool_names
+        assert len(tools) == 6
 
     async def test_includes_plugins_with_input_schema(self, mock_deps) -> None:
         loop = _make_loop(mock_deps)
@@ -561,3 +565,147 @@ class TestMissingCredentials:
         result = await loop._handle_tool_call("tc1", "tool-plugin", {})
         assert "error" in result
         assert "bsage setup" in result
+
+
+class TestHandleToolCallNewTools:
+    """Test _handle_tool_call for update-note, delete-note, search-vault."""
+
+    async def test_update_note_routes_to_garden_writer(self, mock_deps) -> None:
+        mock_deps["garden_writer"].handle_update_note = AsyncMock(
+            return_value={"status": "updated", "path": "/vault/garden/idea/test.md"}
+        )
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call(
+            "tc1", "update-note", {"path": "garden/idea/test.md", "content": "New body"}
+        )
+        mock_deps["garden_writer"].handle_update_note.assert_called_once_with(
+            {"path": "garden/idea/test.md", "content": "New body"}
+        )
+        assert "updated" in result
+
+    async def test_update_note_logs_action(self, mock_deps) -> None:
+        mock_deps["garden_writer"].handle_update_note = AsyncMock(
+            return_value={"status": "updated", "path": "/p"}
+        )
+        loop = _make_loop(mock_deps)
+        await loop._handle_tool_call("tc1", "update-note", {"path": "p", "content": "c"})
+        call_args = mock_deps["garden_writer"].write_action.call_args
+        assert call_args.args[0] == "update-note"
+
+    async def test_update_note_handles_error(self, mock_deps) -> None:
+        mock_deps["garden_writer"].handle_update_note = AsyncMock(
+            side_effect=FileNotFoundError("not found")
+        )
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call("tc1", "update-note", {"path": "x", "content": "c"})
+        assert "error" in result
+
+    async def test_append_note_routes_to_garden_writer(self, mock_deps) -> None:
+        mock_deps["garden_writer"].handle_append_note = AsyncMock(
+            return_value={"status": "appended", "path": "/vault/garden/idea/test.md"}
+        )
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call(
+            "tc1", "append-note", {"path": "garden/idea/test.md", "text": "Extra."}
+        )
+        mock_deps["garden_writer"].handle_append_note.assert_called_once_with(
+            {"path": "garden/idea/test.md", "text": "Extra."}
+        )
+        assert "appended" in result
+
+    async def test_append_note_handles_error(self, mock_deps) -> None:
+        mock_deps["garden_writer"].handle_append_note = AsyncMock(
+            side_effect=FileNotFoundError("not found")
+        )
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call(
+            "tc1", "append-note", {"path": "x", "text": "t"}
+        )
+        assert "error" in result
+
+    async def test_delete_note_routes_to_garden_writer(self, mock_deps) -> None:
+        mock_deps["garden_writer"].handle_delete_note = AsyncMock(
+            return_value={"status": "deleted", "path": "garden/idea/old.md"}
+        )
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call("tc1", "delete-note", {"path": "garden/idea/old.md"})
+        mock_deps["garden_writer"].handle_delete_note.assert_called_once_with(
+            {"path": "garden/idea/old.md"}
+        )
+        assert "deleted" in result
+
+    async def test_delete_note_logs_action(self, mock_deps) -> None:
+        mock_deps["garden_writer"].handle_delete_note = AsyncMock(
+            return_value={"status": "deleted", "path": "p"}
+        )
+        loop = _make_loop(mock_deps)
+        await loop._handle_tool_call("tc1", "delete-note", {"path": "p"})
+        call_args = mock_deps["garden_writer"].write_action.call_args
+        assert call_args.args[0] == "delete-note"
+
+    async def test_delete_note_handles_error(self, mock_deps) -> None:
+        mock_deps["garden_writer"].handle_delete_note = AsyncMock(
+            side_effect=ValueError("Cannot delete action logs")
+        )
+        loop = _make_loop(mock_deps)
+        result = await loop._handle_tool_call("tc1", "delete-note", {"path": "actions/x.md"})
+        assert "error" in result
+
+    async def test_search_vault_with_retriever(self, mock_deps) -> None:
+        mock_retriever = AsyncMock()
+        mock_retriever.retrieve = AsyncMock(return_value="Found: relevant note content")
+        loop = AgentLoop(**mock_deps, retriever=mock_retriever)
+        result = await loop._handle_tool_call("tc1", "search-vault", {"query": "test query"})
+        assert "relevant note content" in result
+
+    async def test_search_vault_without_retriever(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)  # no retriever
+        result = await loop._handle_tool_call("tc1", "search-vault", {"query": "test query"})
+        assert "not available" in result
+
+    async def test_search_vault_handles_error(self, mock_deps) -> None:
+        mock_retriever = AsyncMock()
+        mock_retriever.retrieve = AsyncMock(side_effect=RuntimeError("search failed"))
+        loop = AgentLoop(**mock_deps, retriever=mock_retriever)
+        result = await loop._handle_tool_call("tc1", "search-vault", {"query": "test"})
+        assert "error" in result
+
+
+class TestBuildContextNewFields:
+    """Test build_context injects retriever, scheduler, and events."""
+
+    async def test_build_context_with_retriever(self, mock_deps) -> None:
+        mock_retriever = AsyncMock()
+        mock_retriever.retrieve = AsyncMock(return_value="results")
+        loop = AgentLoop(**mock_deps, retriever=mock_retriever)
+        context = loop.build_context()
+        assert context.retriever is not None
+
+    async def test_build_context_without_retriever(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        context = loop.build_context()
+        assert context.retriever is None
+
+    async def test_build_context_with_scheduler_adapter(self, mock_deps) -> None:
+        mock_scheduler = AsyncMock()
+        loop = AgentLoop(**mock_deps, scheduler_adapter=mock_scheduler)
+        context = loop.build_context()
+        assert context.scheduler is mock_scheduler
+
+    async def test_build_context_without_scheduler_adapter(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        context = loop.build_context()
+        assert context.scheduler is None
+
+    async def test_build_context_with_event_bus(self, mock_deps) -> None:
+        from bsage.core.events import EventBus
+
+        event_bus = EventBus()
+        loop = AgentLoop(**mock_deps, event_bus=event_bus)
+        context = loop.build_context()
+        assert context.events is not None
+
+    async def test_build_context_without_event_bus(self, mock_deps) -> None:
+        loop = _make_loop(mock_deps)
+        context = loop.build_context()
+        assert context.events is None
