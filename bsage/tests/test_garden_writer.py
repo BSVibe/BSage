@@ -579,3 +579,220 @@ class TestGardenWriterEvents:
         writer = GardenWriter(vault)  # no event_bus
         path = await writer.write_seed("src", {"x": 1})
         assert path.exists()
+
+
+class TestUpdateNote:
+    """Test GardenWriter.update_note — replace note content."""
+
+    @pytest.mark.asyncio
+    async def test_update_note_preserves_frontmatter(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        note = GardenNote(title="Original", content="Old body.", note_type="idea", source="test")
+        original_path = await writer.write_garden(note)
+        rel_path = str(original_path.relative_to(tmp_path))
+
+        result = await writer.update_note(rel_path, "New body.", preserve_frontmatter=True)
+        content = result.read_text()
+        assert "type: idea" in content
+        assert "source: test" in content
+        assert "New body." in content
+        assert "Old body." not in content
+
+    @pytest.mark.asyncio
+    async def test_update_note_replaces_all_when_no_preserve(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        note = GardenNote(title="Original", content="Old body.", note_type="idea", source="test")
+        original_path = await writer.write_garden(note)
+        rel_path = str(original_path.relative_to(tmp_path))
+
+        await writer.update_note(rel_path, "Completely new.", preserve_frontmatter=False)
+        content = original_path.read_text()
+        assert content == "Completely new."
+
+    @pytest.mark.asyncio
+    async def test_update_note_raises_on_missing_file(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        with pytest.raises(FileNotFoundError):
+            await writer.update_note("garden/idea/nonexistent.md", "content")
+
+    @pytest.mark.asyncio
+    async def test_update_note_emits_event(self, tmp_path: Path) -> None:
+        from bsage.core.events import EventBus, EventType
+
+        event_bus = EventBus()
+        sub = AsyncMock()
+        event_bus.subscribe(sub)
+
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault, event_bus=event_bus)
+
+        note = GardenNote(title="Event Test", content="Body.", note_type="idea", source="test")
+        path = await writer.write_garden(note)
+        sub.on_event.reset_mock()
+
+        rel_path = str(path.relative_to(tmp_path))
+        await writer.update_note(rel_path, "Updated body.")
+
+        events = [c.args[0] for c in sub.on_event.call_args_list]
+        assert any(e.event_type == EventType.NOTE_UPDATED for e in events)
+
+
+class TestAppendToNote:
+    """Test GardenWriter.append_to_note."""
+
+    @pytest.mark.asyncio
+    async def test_append_to_note_adds_text(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        note = GardenNote(title="Append Test", content="Original.", note_type="idea", source="test")
+        path = await writer.write_garden(note)
+        rel_path = str(path.relative_to(tmp_path))
+
+        await writer.append_to_note(rel_path, "\n\nAppended text.")
+        content = path.read_text()
+        assert "Original." in content
+        assert "Appended text." in content
+
+    @pytest.mark.asyncio
+    async def test_append_to_note_raises_on_missing_file(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        with pytest.raises(FileNotFoundError):
+            await writer.append_to_note("garden/idea/nonexistent.md", "text")
+
+
+class TestDeleteNote:
+    """Test GardenWriter.delete_note."""
+
+    @pytest.mark.asyncio
+    async def test_delete_note_removes_file(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        note = GardenNote(title="Delete Me", content="Body.", note_type="idea", source="test")
+        path = await writer.write_garden(note)
+        rel_path = str(path.relative_to(tmp_path))
+        assert path.exists()
+
+        await writer.delete_note(rel_path)
+        assert not path.exists()
+
+    @pytest.mark.asyncio
+    async def test_delete_note_rejects_actions(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        with pytest.raises(ValueError, match="Cannot delete action logs"):
+            await writer.delete_note("actions/2026-03-07.md")
+
+    @pytest.mark.asyncio
+    async def test_delete_note_raises_on_missing_file(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        with pytest.raises(FileNotFoundError):
+            await writer.delete_note("garden/idea/nonexistent.md")
+
+    @pytest.mark.asyncio
+    async def test_delete_note_emits_event(self, tmp_path: Path) -> None:
+        from bsage.core.events import EventBus, EventType
+
+        event_bus = EventBus()
+        sub = AsyncMock()
+        event_bus.subscribe(sub)
+
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault, event_bus=event_bus)
+
+        note = GardenNote(title="Delete Event", content="Body.", note_type="idea", source="test")
+        path = await writer.write_garden(note)
+        sub.on_event.reset_mock()
+
+        rel_path = str(path.relative_to(tmp_path))
+        await writer.delete_note(rel_path)
+
+        events = [c.args[0] for c in sub.on_event.call_args_list]
+        assert any(e.event_type == EventType.NOTE_DELETED for e in events)
+
+
+class TestHandleUpdateNote:
+    """Test GardenWriter.handle_update_note — LLM tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_handle_update_note_returns_result(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        note = GardenNote(title="Handler Test", content="Body.", note_type="idea", source="test")
+        path = await writer.write_garden(note)
+        rel_path = str(path.relative_to(tmp_path))
+
+        result = await writer.handle_update_note({"path": rel_path, "content": "Updated body."})
+        assert result["status"] == "updated"
+        assert "path" in result
+
+
+class TestHandleAppendNote:
+    """Test GardenWriter.handle_append_note — LLM tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_handle_append_note_returns_result(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        note = GardenNote(title="Append Handler", content="Body.", note_type="idea", source="test")
+        path = await writer.write_garden(note)
+        rel_path = str(path.relative_to(tmp_path))
+
+        result = await writer.handle_append_note({"path": rel_path, "text": "\n\nExtra."})
+        assert result["status"] == "appended"
+        assert "path" in result
+        content = path.read_text()
+        assert "Extra." in content
+
+    @pytest.mark.asyncio
+    async def test_handle_append_note_raises_on_missing(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        with pytest.raises(FileNotFoundError):
+            await writer.handle_append_note({"path": "garden/idea/no.md", "text": "x"})
+
+
+class TestHandleDeleteNote:
+    """Test GardenWriter.handle_delete_note — LLM tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_handle_delete_note_returns_result(self, tmp_path: Path) -> None:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        writer = GardenWriter(vault)
+
+        note = GardenNote(title="Handler Delete", content="Body.", note_type="idea", source="test")
+        path = await writer.write_garden(note)
+        rel_path = str(path.relative_to(tmp_path))
+
+        result = await writer.handle_delete_note({"path": rel_path})
+        assert result["status"] == "deleted"
+        assert not path.exists()

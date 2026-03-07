@@ -135,3 +135,35 @@ class TestEventBus:
         sub = AsyncMock(spec=EventSubscriber)
         with pytest.raises(ValueError):
             bus.unsubscribe(sub)
+
+
+class TestEventEmitterAdapter:
+    """Test EventEmitterAdapter exposes EventBus to plugins."""
+
+    async def test_emit_dispatches_to_event_bus(self) -> None:
+        from bsage.core.events import EventEmitterAdapter
+
+        bus = EventBus()
+        sub = AsyncMock(spec=EventSubscriber)
+        bus.subscribe(sub)
+
+        adapter = EventEmitterAdapter(bus)
+        await adapter.emit("SEED_WRITTEN", {"path": "/vault/seeds/test.md"})
+
+        sub.on_event.assert_awaited_once()
+        event = sub.on_event.call_args.args[0]
+        assert event.event_type == EventType.SEED_WRITTEN
+        assert event.payload["path"] == "/vault/seeds/test.md"
+
+    async def test_emit_invalid_event_type_raises(self) -> None:
+        from bsage.core.events import EventEmitterAdapter
+
+        bus = EventBus()
+        adapter = EventEmitterAdapter(bus)
+
+        with pytest.raises(KeyError):
+            await adapter.emit("NONEXISTENT_EVENT", {})
+
+    async def test_note_updated_and_deleted_types_exist(self) -> None:
+        assert EventType.NOTE_UPDATED.value == "note_updated"
+        assert EventType.NOTE_DELETED.value == "note_deleted"

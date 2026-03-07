@@ -27,12 +27,29 @@ class IndexSubscriber:
         self._vault = vault
 
     async def on_event(self, event: Event) -> None:
-        """Handle an event from the EventBus."""
+        """Handle an event from the EventBus.
+
+        Handles SEED_WRITTEN, GARDEN_WRITTEN, NOTE_UPDATED (index/re-index)
+        and NOTE_DELETED (remove from index).
+        """
         from bsage.core.events import EventType
+
+        if event.event_type == EventType.NOTE_DELETED:
+            path_str = event.payload.get("path", "")
+            if not path_str:
+                return
+            try:
+                abs_path = Path(path_str)
+                rel_path = str(abs_path.relative_to(self._vault.root))
+                await self._retriever.remove_note(rel_path)
+            except Exception:
+                logger.warning("index_on_delete_failed", path=path_str, exc_info=True)
+            return
 
         if event.event_type not in (
             EventType.SEED_WRITTEN,
             EventType.GARDEN_WRITTEN,
+            EventType.NOTE_UPDATED,
         ):
             return
 

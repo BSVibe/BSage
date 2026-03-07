@@ -34,6 +34,10 @@ class EventType(Enum):
     GARDEN_WRITTEN = "garden_written"
     ACTION_LOGGED = "action_logged"
 
+    # Vault mutations
+    NOTE_UPDATED = "note_updated"
+    NOTE_DELETED = "note_deleted"
+
     # Scheduler
     TRIGGER_FIRED = "trigger_fired"
 
@@ -107,6 +111,22 @@ async def emit_event(
     if correlation_id:
         kwargs["correlation_id"] = correlation_id
     await event_bus.emit(Event(**kwargs))
+
+
+class EventEmitterAdapter:
+    """Exposes EventBus to plugins as EventEmitter protocol."""
+
+    def __init__(self, event_bus: EventBus) -> None:
+        self._bus = event_bus
+
+    async def emit(self, event_type: str, payload: dict[str, Any]) -> None:
+        """Emit an event through the EventBus.
+
+        Args:
+            event_type: EventType member name (e.g. ``"PLUGIN_RUN_COMPLETE"``).
+            payload: Event-specific data dict.
+        """
+        await emit_event(self._bus, event_type, payload)
 
 
 class EventBus:

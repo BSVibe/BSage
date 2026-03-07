@@ -224,6 +224,20 @@ class VaultRetriever:
         await self._vector_store.upsert(record)
         logger.info("note_indexed", note_path=note_path, note_type=note_type)
 
+    async def remove_note(self, note_path: str) -> None:
+        """Remove a note from the vector store index.
+
+        No-op if RAG is not available.
+
+        Args:
+            note_path: Relative path within the vault.
+        """
+        if not self.rag_available:
+            return
+        assert self._vector_store is not None
+        await self._vector_store.delete(note_path)
+        logger.info("note_removed_from_index", note_path=note_path)
+
     async def reindex_all(
         self,
         dirs: list[str] | None = None,

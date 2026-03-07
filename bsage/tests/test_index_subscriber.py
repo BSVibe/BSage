@@ -90,3 +90,57 @@ class TestIndexSubscriber:
         # Should not raise
         await sub.on_event(event)
         retriever.index_note.assert_not_called()
+
+    async def test_reindexes_on_note_updated(self) -> None:
+        retriever = _make_retriever()
+        vault = _make_vault(content="updated content")
+
+        sub = IndexSubscriber(retriever, vault)
+        event = Event(
+            event_type=EventType.NOTE_UPDATED,
+            payload={"path": "/vault/garden/idea/my-note.md"},
+        )
+        await sub.on_event(event)
+
+        retriever.index_note.assert_called_once_with("garden/idea/my-note.md", "updated content")
+
+    async def test_removes_on_note_deleted(self) -> None:
+        retriever = _make_retriever()
+        retriever.remove_note = AsyncMock()
+        vault = _make_vault()
+
+        sub = IndexSubscriber(retriever, vault)
+        event = Event(
+            event_type=EventType.NOTE_DELETED,
+            payload={"path": "/vault/garden/idea/deleted-note.md"},
+        )
+        await sub.on_event(event)
+
+        retriever.remove_note.assert_called_once_with("garden/idea/deleted-note.md")
+
+    async def test_note_deleted_ignores_empty_path(self) -> None:
+        retriever = _make_retriever()
+        retriever.remove_note = AsyncMock()
+        vault = _make_vault()
+
+        sub = IndexSubscriber(retriever, vault)
+        event = Event(
+            event_type=EventType.NOTE_DELETED,
+            payload={},
+        )
+        await sub.on_event(event)
+
+        retriever.remove_note.assert_not_called()
+
+    async def test_note_deleted_handles_error_gracefully(self) -> None:
+        retriever = _make_retriever()
+        retriever.remove_note = AsyncMock(side_effect=OSError("delete error"))
+        vault = _make_vault()
+
+        sub = IndexSubscriber(retriever, vault)
+        event = Event(
+            event_type=EventType.NOTE_DELETED,
+            payload={"path": "/vault/garden/idea/broken.md"},
+        )
+        # Should not raise
+        await sub.on_event(event)

@@ -388,6 +388,27 @@ class TestVaultRetrieverReindexAll:
 
         mock_store.delete.assert_called_once_with("garden/idea/deleted.md")
 
+
+class TestVaultRetrieverRemoveNote:
+    """Test remove_note() for index cleanup."""
+
+    async def test_remove_note_calls_vector_store_delete(self) -> None:
+        mock_store = AsyncMock()
+        mock_store.delete = AsyncMock()
+
+        retriever = VaultRetriever(
+            vault=MagicMock(),
+            vector_store=mock_store,
+            embedding_client=MagicMock(),
+        )
+        await retriever.remove_note("garden/idea/old-note.md")
+        mock_store.delete.assert_called_once_with("garden/idea/old-note.md")
+
+    async def test_remove_note_noop_when_rag_unavailable(self) -> None:
+        retriever = VaultRetriever(vault=MagicMock())
+        # Should not raise
+        await retriever.remove_note("garden/idea/old-note.md")
+
     async def test_reindex_all_reports_progress(self) -> None:
         vault = _mock_vault(
             {

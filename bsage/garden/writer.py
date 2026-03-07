@@ -132,6 +132,115 @@ WRITE_SEED_TOOL: dict[str, Any] = {
 }
 
 
+UPDATE_NOTE_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "update-note",
+        "description": (
+            "Update the content of an existing vault note. "
+            "Use when modifying, replacing, or adding links to an existing note."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Vault-relative path (e.g. garden/idea/my-note.md)",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "New markdown body content",
+                },
+                "preserve_frontmatter": {
+                    "type": "boolean",
+                    "description": "Keep existing YAML frontmatter (default: true)",
+                },
+            },
+            "required": ["path", "content"],
+        },
+    },
+}
+
+DELETE_NOTE_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "delete-note",
+        "description": (
+            "Delete a note from the vault. Cannot delete action logs. "
+            "Use when a note is outdated, duplicated, or no longer needed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Vault-relative path to delete",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+}
+
+APPEND_NOTE_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "append-note",
+        "description": (
+            "Append text to an existing vault note. "
+            "Use when adding new content without replacing what already exists."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Vault-relative path (e.g. garden/idea/my-note.md)",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to append to the note",
+                },
+            },
+            "required": ["path", "text"],
+        },
+    },
+}
+
+SEARCH_VAULT_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "search-vault",
+        "description": (
+            "Search the vault for relevant notes using semantic search. "
+            "Use to find related notes, check for duplicates, or gather context."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query",
+                },
+                "context_dirs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Vault subdirectories to search "
+                        "(default: seeds, garden/idea, garden/insight)"
+                    ),
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Max notes to return (default: 10)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
 class GardenWriter:
     """Writes seeds, garden notes, and action logs to the vault.
 
@@ -375,6 +484,134 @@ class GardenWriter:
             The text content of the note.
         """
         return await self._vault.read_note_content(path)
+
+    async def update_note(
+        self, path: str, content: str, *, preserve_frontmatter: bool = True
+    ) -> Path:
+        """Replace the content of an existing vault note.
+
+        Args:
+            path: Vault-relative path (e.g. ``"garden/idea/my-note.md"``).
+            content: New markdown content.
+            preserve_frontmatter: If True, keep existing YAML frontmatter
+                and replace only the body.
+
+        Returns:
+            Resolved absolute path to the updated file.
+
+        Raises:
+            FileNotFoundError: If the note does not exist.
+            ValueError: If the path escapes the vault boundary.
+        """
+        resolved = self._vault.resolve_path(path)
+        if not resolved.exists():
+            raise FileNotFoundError(f"Note not found: {path}")
+
+        if preserve_frontmatter:
+            existing = await self._vault.read_note_content(resolved)
+            if existing.startswith("---\n"):
+                try:
+                    end_idx = existing.index("\n---\n", 4)
+                    frontmatter = existing[: end_idx + 5]
+                    content = frontmatter + "\n" + content
+                except ValueError:
+                    pass
+
+        await asyncio.to_thread(resolved.write_text, content, encoding="utf-8")
+        logger.info("note_updated", path=str(resolved))
+        await self._notify_sync("garden", resolved, "update")
+        await emit_event(self._event_bus, "NOTE_UPDATED", {"path": str(resolved)})
+        return resolved
+
+    async def append_to_note(self, path: str, text: str) -> None:
+        """Append text to an existing vault note.
+
+        Args:
+            path: Vault-relative path.
+            text: Text to append.
+
+        Raises:
+            FileNotFoundError: If the note does not exist.
+            ValueError: If the path escapes the vault boundary.
+        """
+        resolved = self._vault.resolve_path(path)
+        if not resolved.exists():
+            raise FileNotFoundError(f"Note not found: {path}")
+
+        def _append() -> None:
+            with resolved.open("a", encoding="utf-8") as f:
+                f.write(text)
+
+        await asyncio.to_thread(_append)
+        logger.info("note_appended", path=str(resolved))
+        await self._notify_sync("garden", resolved, "update")
+        await emit_event(self._event_bus, "NOTE_UPDATED", {"path": str(resolved)})
+
+    async def delete_note(self, path: str) -> None:
+        """Delete a note from the vault.
+
+        Args:
+            path: Vault-relative path.
+
+        Raises:
+            ValueError: If path is in ``actions/`` (action logs are append-only)
+                or escapes the vault boundary.
+            FileNotFoundError: If the note does not exist.
+        """
+        if path.startswith("actions/"):
+            raise ValueError("Cannot delete action logs")
+        resolved = self._vault.resolve_path(path)
+        if not resolved.exists():
+            raise FileNotFoundError(f"Note not found: {path}")
+
+        await asyncio.to_thread(resolved.unlink)
+        logger.info("note_deleted", path=str(resolved))
+        await self._notify_sync("garden", resolved, "delete")
+        await emit_event(self._event_bus, "NOTE_DELETED", {"path": str(resolved)})
+
+    async def handle_update_note(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Handle an update-note tool call from the LLM.
+
+        Args:
+            args: Tool call arguments with path, content, and optional
+                  preserve_frontmatter.
+
+        Returns:
+            Dict with status and path of the updated note.
+        """
+        path = args["path"]
+        content = args["content"]
+        preserve = args.get("preserve_frontmatter", True)
+        resolved = await self.update_note(path, content, preserve_frontmatter=preserve)
+        return {"status": "updated", "path": str(resolved)}
+
+    async def handle_append_note(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Handle an append-note tool call from the LLM.
+
+        Args:
+            args: Tool call arguments with path and text.
+
+        Returns:
+            Dict with status and path of the appended note.
+        """
+        path = args["path"]
+        text = args["text"]
+        await self.append_to_note(path, text)
+        resolved = self._vault.resolve_path(path)
+        return {"status": "appended", "path": str(resolved)}
+
+    async def handle_delete_note(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Handle a delete-note tool call from the LLM.
+
+        Args:
+            args: Tool call arguments with path.
+
+        Returns:
+            Dict with status and path of the deleted note.
+        """
+        path = args["path"]
+        await self.delete_note(path)
+        return {"status": "deleted", "path": path}
 
     async def _notify_sync(self, event_type_str: str, path: Path, source: str) -> None:
         """Notify sync manager of a write event, if configured."""
