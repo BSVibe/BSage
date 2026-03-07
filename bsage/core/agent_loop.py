@@ -94,9 +94,6 @@ class AgentLoop:
         # 1. Write raw data to seeds
         await self._garden_writer.write_seed(plugin_name, raw_data)
 
-        # Build reply_fn from source plugin's _notify_fn
-        reply_fn = self._make_reply_fn(plugin_name)
-
         # 2. Run deterministic on_input-triggered plugins/skills
         triggered = self._find_triggered(plugin_name)
         results: list[dict] = []
@@ -105,7 +102,7 @@ class AgentLoop:
             if not approved:
                 logger.warning("entry_rejected_by_safe_mode", name=meta.name)
                 continue
-            context = self.build_context(input_data=raw_data, reply_fn=reply_fn)
+            context = self.build_context(input_data=raw_data, reply_via=plugin_name)
             try:
                 result = await self._runner.run(meta, context)
             except MissingCredentialError:
@@ -116,7 +113,7 @@ class AgentLoop:
             await self._garden_writer.write_action(meta.name, summary)
 
         # 3. Let LLM decide and execute on-demand plugins via tool use
-        on_demand_results = await self._decide_on_demand(plugin_name, raw_data, reply_fn)
+        on_demand_results = await self._decide_on_demand(plugin_name, raw_data)
         results.extend(on_demand_results)
 
         logger.info(
@@ -250,7 +247,7 @@ class AgentLoop:
     # ------------------------------------------------------------------
 
     async def _decide_on_demand(
-        self, source_name: str, raw_data: dict[str, Any], reply_fn: ReplyFn | None = None
+        self, source_name: str, raw_data: dict[str, Any]
     ) -> list[dict]:
         """Let LLM decide and execute on-demand entries via tool use.
 
@@ -323,7 +320,7 @@ class AgentLoop:
                 approved = await self._safe_mode_guard.check(meta)
                 if not approved:
                     continue
-                context = self.build_context(input_data=raw_data, reply_fn=reply_fn)
+                context = self.build_context(input_data=raw_data, reply_via=source_name)
                 result = await self._runner.run(meta, context)
                 results.append(result)
                 summary = json.dumps(result, default=str)
@@ -388,18 +385,15 @@ class AgentLoop:
     def build_context(
         self,
         input_data: dict[str, Any] | None = None,
-        reply_fn: ReplyFn | None = None,
-        for_entry: str | None = None,
+        reply_via: str | None = None,
     ) -> SkillContext:
         """Create a SkillContext with all dependencies injected.
 
         Args:
             input_data: Input payload for the skill.
-            reply_fn: Explicit reply callback (takes priority over for_entry).
-            for_entry: Plugin name to auto-resolve reply_fn from its _notify_fn.
+            reply_via: Plugin name whose _notify_fn provides the reply channel.
         """
-        if reply_fn is None and for_entry:
-            reply_fn = self._make_reply_fn(for_entry)
+        reply_fn = self._make_reply_fn(reply_via) if reply_via else None
         chat_bridge = None
         if self._prompt_registry:
             from bsage.core.chat_bridge import ChatBridge

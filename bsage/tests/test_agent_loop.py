@@ -448,12 +448,14 @@ class TestAgentLoopBuildContext:
         context = loop.build_context(input_data=None)
         assert context.input_data is None
 
-    async def test_build_context_with_reply_fn(self, mock_deps) -> None:
+    async def test_build_context_with_reply_via(self, mock_deps) -> None:
+        meta = mock_deps["registry"]["calendar-input"]
+        meta._notify_fn = AsyncMock(return_value={"sent": True})
+        mock_deps["runner"].run_notify = AsyncMock(return_value={"sent": True})
         loop = AgentLoop(**mock_deps, prompt_registry=MagicMock())
-        reply_fn = AsyncMock()
-        context = loop.build_context(input_data={"k": "v"}, reply_fn=reply_fn)
+        context = loop.build_context(input_data={"k": "v"}, reply_via="calendar-input")
         assert context.chat is not None
-        assert context.chat._reply_fn is reply_fn
+        assert context.chat._reply_fn is not None
 
     async def test_build_context_no_chat_without_prompt_registry(self, mock_deps) -> None:
         loop = _make_loop(mock_deps)  # no prompt_registry
