@@ -270,4 +270,6 @@ class TestVaultTagsEndpoint:
 
         response = client.get("/api/vault/tags")
         assert response.status_code == 200
-        assert response.json() == {"tags": {}}
+        data = response.json()
+        assert data["tags"] == {}
+        assert data["truncated"] is False

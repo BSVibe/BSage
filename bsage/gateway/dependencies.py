@@ -118,6 +118,8 @@ class AppState:
             vault=self.vault,
             vector_store=self.vector_store,
             embedding_client=self.embedding_client,
+            event_bus=self.event_bus,
+            garden_writer=self.garden_writer,
         )
 
         # Skills
@@ -220,12 +222,19 @@ class AppState:
 
         Runs in the background so it doesn't block server startup.
         Content-hash dedup ensures only new/changed notes are re-embedded.
+        Retries once after 60 seconds to handle transient embedding API failures.
         """
-        try:
-            count = await self.retriever.reindex_all()
-            logger.info("startup_reindex_complete", indexed=count)
-        except Exception:
-            logger.warning("startup_reindex_failed", exc_info=True)
+        for attempt in range(2):
+            try:
+                count = await self.retriever.reindex_all()
+                logger.info("startup_reindex_complete", indexed=count, attempt=attempt)
+                return
+            except Exception:
+                if attempt == 0:
+                    logger.warning("startup_reindex_failed_retrying", exc_info=True)
+                    await asyncio.sleep(60.0)
+                else:
+                    logger.error("startup_reindex_failed", exc_info=True)
 
     async def _refresh_registry(self) -> None:
         """Scan for new plugins/skills and integrate them into the live registry.

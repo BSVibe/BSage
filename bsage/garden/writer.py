@@ -13,6 +13,7 @@ import structlog
 import yaml
 
 from bsage.core.events import emit_event
+from bsage.core.patterns import RELATED_RE
 from bsage.garden.vault import Vault
 
 if TYPE_CHECKING:
@@ -522,6 +523,68 @@ class GardenWriter:
         await self._notify_sync("garden", resolved, "update")
         await emit_event(self._event_bus, "NOTE_UPDATED", {"path": str(resolved)})
         return resolved
+
+    async def update_frontmatter_related(
+        self, note_path: str, linked_paths: set[str]
+    ) -> None:
+        """Merge auto-discovered links into the note's frontmatter ``related`` field.
+
+        Converts vault-relative paths to ``[[wiki-link]]`` format and merges
+        with any existing ``related`` entries using regex surgery on the raw
+        frontmatter string (preserves key ordering and quoting style).
+        Emits ``NOTE_UPDATED`` so output plugins can sync.
+
+        Args:
+            note_path: Vault-relative path to the note.
+            linked_paths: Set of vault-relative paths to link to.
+        """
+        try:
+            abs_path = self._vault.resolve_path(note_path)
+            if not abs_path.resolve().is_relative_to(self._vault.root.resolve()):
+                logger.warning("path_traversal_blocked", note_path=note_path)
+                return
+            if not abs_path.exists():
+                return
+            content = await self._vault.read_note_content(abs_path)
+        except Exception:
+            return
+
+        if not content.startswith("---\n"):
+            return
+        try:
+            end_idx = content.index("\n---\n", 4)
+        except ValueError:
+            return
+
+        fm_str = content[4:end_idx]
+        body = content[end_idx + 5 :]
+
+        try:
+            metadata = yaml.safe_load(fm_str)
+        except Exception:
+            return
+        if not isinstance(metadata, dict):
+            return
+
+        new_links: set[str] = {f"[[{Path(lp).stem}]]" for lp in linked_paths}
+        existing_related = metadata.get("related", [])
+        existing_set = set(existing_related) if isinstance(existing_related, list) else set()
+        merged = sorted(existing_set | new_links)
+        if merged == sorted(existing_related if isinstance(existing_related, list) else []):
+            return
+
+        related_lines = "related:\n" + "".join(f"- '{link}'\n" for link in merged)
+        if RELATED_RE.search(fm_str):
+            updated_fm = RELATED_RE.sub(related_lines, fm_str)
+        else:
+            sep = "" if fm_str.endswith("\n") else "\n"
+            updated_fm = fm_str + sep + related_lines
+
+        new_content = f"---\n{updated_fm}---\n{body}"
+        await asyncio.to_thread(abs_path.write_text, new_content, encoding="utf-8")
+        logger.debug("note_related_updated", note_path=note_path, links=len(merged))
+        await self._notify_sync("garden", abs_path, "update")
+        await emit_event(self._event_bus, "NOTE_UPDATED", {"path": note_path})
 
     async def append_to_note(self, path: str, text: str) -> None:
         """Append text to an existing vault note.
