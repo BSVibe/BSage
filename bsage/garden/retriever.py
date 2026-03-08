@@ -161,7 +161,7 @@ class VaultRetriever:
         if self._embedding_client is None or self._vector_store is None:
             return await self._fallback_retrieve(context_dirs, max_chars, top_k)
 
-        query_vec = await self._embedding_client.embed_one(query[:settings.max_embedding_text])
+        query_vec = await self._embedding_client.embed_one(query[: settings.max_embedding_text])
         results = await self._vector_store.search(query_vec, top_k=top_k * 2)
 
         # Filter to notes within the requested context_dirs
@@ -207,7 +207,7 @@ class VaultRetriever:
             return await self._fallback_retrieve(context_dirs, max_chars, top_k)
 
         # 1) Embed query, then run semantic + FTS in parallel
-        query_vec = await self._embedding_client.embed_one(query[:settings.max_embedding_text])
+        query_vec = await self._embedding_client.embed_one(query[: settings.max_embedding_text])
         semantic_results, fts_results = await asyncio.gather(
             self._vector_store.search(query_vec, top_k=top_k * 2),
             self._vector_store.fts_search(query, top_k=top_k * 2),
@@ -340,7 +340,7 @@ class VaultRetriever:
         source = metadata.get("source", "")
 
         body = _strip_frontmatter(content)
-        embed_text = f"{title}\n{body}".strip()[:settings.max_embedding_text]
+        embed_text = f"{title}\n{body}".strip()[: settings.max_embedding_text]
 
         try:
             vector = await self._embedding_client.embed_one(embed_text)

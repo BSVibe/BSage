@@ -657,9 +657,7 @@ class TestVaultRetrieverHybrid:
 
     async def test_hybrid_fts_unavailable_degrades_to_semantic(self) -> None:
         """When FTS5 returns empty results, hybrid falls back to semantic-only scoring."""
-        vault = _mock_vault(
-            {"garden/idea": [("sem.md", "Semantic result"), ("other.md", "Other")]}
-        )
+        vault = _mock_vault({"garden/idea": [("sem.md", "Semantic result"), ("other.md", "Other")]})
         mock_store = _mock_store_for_hybrid(
             semantic_results=[
                 SearchResult("garden/idea/sem.md", "Sem", 0.9, "idea", "test"),

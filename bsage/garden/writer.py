@@ -524,9 +524,7 @@ class GardenWriter:
         await emit_event(self._event_bus, "NOTE_UPDATED", {"path": str(resolved)})
         return resolved
 
-    async def update_frontmatter_related(
-        self, note_path: str, linked_paths: set[str]
-    ) -> None:
+    async def update_frontmatter_related(self, note_path: str, linked_paths: set[str]) -> None:
         """Merge auto-discovered links into the note's frontmatter ``related`` field.
 
         Converts vault-relative paths to ``[[wiki-link]]`` format and merges
