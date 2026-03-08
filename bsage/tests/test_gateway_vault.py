@@ -190,7 +190,9 @@ class TestVaultGraphEndpoint:
         data = response.json()
         assert "nodes" in data
         assert "links" in data
+        assert "truncated" in data
         assert len(data["nodes"]) == 4  # 4 .md files in our test vault
+        assert data["truncated"] is False
 
     def test_graph_nodes_have_required_fields(self, client) -> None:
         response = client.get("/api/vault/graph")
@@ -226,6 +228,22 @@ class TestVaultGraphEndpoint:
         data = response.json()
         assert data["nodes"] == []
         assert data["links"] == []
+        assert data["truncated"] is False
+
+    def test_graph_max_files_truncation(self, client) -> None:
+        """max_files=1 on a vault with 4 files should set truncated=True."""
+        response = client.get("/api/vault/graph?max_files=1")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["nodes"]) == 1
+        assert data["truncated"] is True
+
+    def test_graph_max_files_no_truncation(self, client) -> None:
+        """max_files larger than vault size should set truncated=False."""
+        response = client.get("/api/vault/graph?max_files=2000")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["truncated"] is False
 
 
 class TestVaultTagsEndpoint:
@@ -235,6 +253,8 @@ class TestVaultTagsEndpoint:
         response = client.get("/api/vault/tags")
         assert response.status_code == 200
         data = response.json()
+        assert "truncated" in data
+        assert data["truncated"] is False
         tags = data["tags"]
         assert "project" in tags
         assert "insight" in tags
@@ -270,4 +290,20 @@ class TestVaultTagsEndpoint:
 
         response = client.get("/api/vault/tags")
         assert response.status_code == 200
-        assert response.json() == {"tags": {}}
+        data = response.json()
+        assert data["tags"] == {}
+        assert data["truncated"] is False
+
+    def test_tags_max_files_truncation(self, client) -> None:
+        """max_files=1 on a vault with 4 files should set truncated=True."""
+        response = client.get("/api/vault/tags?max_files=1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["truncated"] is True
+
+    def test_tags_max_files_no_truncation(self, client) -> None:
+        """max_files larger than vault size should set truncated=False."""
+        response = client.get("/api/vault/tags?max_files=2000")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["truncated"] is False

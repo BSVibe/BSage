@@ -13,13 +13,12 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from bsage.core.exceptions import VaultPathError
+from bsage.core.patterns import WIKILINK_RE
 from bsage.core.plugin_loader import PluginMeta
 from bsage.core.skill_loader import SkillMeta
 from bsage.gateway.dependencies import AppState
 
 logger = structlog.get_logger(__name__)
-
-_WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 _TAG_RE = re.compile(r"(?:^|(?<=\s))#([a-zA-Z][a-zA-Z0-9_/-]+)", re.MULTILINE)
 
 
@@ -289,8 +288,12 @@ def create_routes(state: AppState) -> APIRouter:
 
     # -- Vault search / backlinks / graph / tags -----------------------------
 
-    async def _scan_vault_md_files() -> list[tuple[str, str]]:
-        """Walk vault and return (relative_path, content) for all .md files."""
+    async def _scan_vault_md_files(max_files: int = 0) -> list[tuple[str, str]]:
+        """Walk vault and return (relative_path, content) for all .md files.
+
+        Args:
+            max_files: Maximum number of files to return. 0 means no limit.
+        """
         vault_root = state.vault.root
 
         def _walk() -> list[tuple[str, str]]:
@@ -300,6 +303,8 @@ def create_routes(state: AppState) -> APIRouter:
                 for f in sorted(filenames):
                     if not f.endswith(".md"):
                         continue
+                    if max_files and len(results) >= max_files:
+                        return results
                     full = Path(dirpath) / f
                     rel = str(full.relative_to(vault_root))
                     try:
@@ -362,7 +367,7 @@ def create_routes(state: AppState) -> APIRouter:
         for rel, content in files:
             if rel == path:
                 continue
-            for m in _WIKILINK_RE.finditer(content):
+            for m in WIKILINK_RE.finditer(content):
                 link = m.group(1).strip()
                 link_lower = link.lower()
                 # Match by filename stem or by relative path (with/without .md)
@@ -374,9 +379,12 @@ def create_routes(state: AppState) -> APIRouter:
         return results
 
     @api_router.get("/vault/graph")
-    async def vault_graph() -> dict[str, Any]:
+    async def vault_graph(
+        max_files: int = Query(default=500, ge=1, le=2000, description="Max files to scan"),
+    ) -> dict[str, Any]:
         """Return all notes as nodes and wikilink connections as edges."""
-        files = await _scan_vault_md_files()
+        files = await _scan_vault_md_files(max_files=max_files)
+        truncated = len(files) >= max_files
         stem_lookup = _build_stem_lookup(files)
         known_paths = {rel for rel, _ in files}
 
@@ -390,7 +398,7 @@ def create_routes(state: AppState) -> APIRouter:
             name = Path(rel).stem
             nodes.append({"id": rel, "name": name, "group": group})
 
-            for m in _WIKILINK_RE.finditer(content):
+            for m in WIKILINK_RE.finditer(content):
                 link = m.group(1).strip()
                 link_lower = link.lower()
                 # Resolve link to a known path
@@ -404,12 +412,15 @@ def create_routes(state: AppState) -> APIRouter:
                 if target and target != rel:
                     links.append({"source": rel, "target": target})
 
-        return {"nodes": nodes, "links": links}
+        return {"nodes": nodes, "links": links, "truncated": truncated}
 
     @api_router.get("/vault/tags")
-    async def vault_tags() -> dict[str, Any]:
+    async def vault_tags(
+        max_files: int = Query(default=500, ge=1, le=2000, description="Max files to scan"),
+    ) -> dict[str, Any]:
         """Extract all #tag occurrences from vault files."""
-        files = await _scan_vault_md_files()
+        files = await _scan_vault_md_files(max_files=max_files)
+        truncated = len(files) >= max_files
         tag_map: dict[str, list[str]] = {}
 
         for rel, content in files:
@@ -426,7 +437,7 @@ def create_routes(state: AppState) -> APIRouter:
             for tag in found_tags:
                 tag_map.setdefault(tag, []).append(rel)
 
-        return {"tags": tag_map}
+        return {"tags": tag_map, "truncated": truncated}
 
     # -- Config --------------------------------------------------------------
 

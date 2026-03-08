@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_api_base: str | None = None
     rag_index_path: Path | None = None
+    max_embedding_text: int = 8_000
 
     # Runtime
     safe_mode: bool = True
