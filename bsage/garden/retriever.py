@@ -64,7 +64,7 @@ class VaultRetriever:
         if self._index_reader is not None:
             try:
                 return await self._index_retrieve(context_dirs, max_chars, top_k)
-            except Exception:
+            except (FileNotFoundError, OSError, UnicodeDecodeError, ValueError, RuntimeError):
                 logger.warning("index_retrieve_failed_fallback", exc_info=True)
 
         return await self._fallback_retrieve(context_dirs, max_chars, top_k)
@@ -125,7 +125,7 @@ class VaultRetriever:
                 graph_context = await self._graph_retriever.retrieve(query, top_k=top_k)
                 if graph_context:
                     return index_result + "\n\n" + graph_context
-            except Exception:
+            except (FileNotFoundError, OSError, ValueError):
                 logger.debug("graph_search_failed", exc_info=True)
 
         return index_result
@@ -179,7 +179,7 @@ class VaultRetriever:
                 remaining = max_chars - total
                 parts.append(content[:remaining])
                 total += len(parts[-1])
-            except Exception:
+            except (FileNotFoundError, OSError, UnicodeDecodeError):
                 logger.debug("index_read_note_failed", path=s.path)
 
         logger.info(
@@ -204,7 +204,7 @@ class VaultRetriever:
                 break
             try:
                 note_paths = await self._vault.read_notes(subdir)
-            except Exception:
+            except (FileNotFoundError, OSError):
                 continue
             for path in reversed(note_paths[-max_notes_per_dir:]):
                 if total >= max_chars:
@@ -214,7 +214,7 @@ class VaultRetriever:
                     remaining = max_chars - total
                     parts.append(text[:remaining])
                     total += len(parts[-1])
-                except Exception:
+                except (FileNotFoundError, OSError, UnicodeDecodeError):
                     pass
 
         return "\n---\n".join(parts)

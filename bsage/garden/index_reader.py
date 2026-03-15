@@ -66,3 +66,12 @@ class IndexReader(Protocol):
             category: Vault subdirectory to rebuild.
         """
         ...
+
+    async def index_note_from_content(self, note_path: str, content: str) -> None:
+        """Index a note directly from its content (used by event subscribers).
+
+        Args:
+            note_path: Vault-relative path.
+            content: Full note content including frontmatter.
+        """
+        ...

@@ -1,5 +1,7 @@
 """Tests for GraphStore — real SQLite via tmp_path."""
 
+import asyncio
+
 import pytest
 
 from bsage.garden.graph_models import GraphEntity, GraphRelationship, ProvenanceRecord
@@ -281,3 +283,41 @@ async def test_search_entities_empty(store: GraphStore):
 async def test_delete_by_source_no_match(store: GraphStore):
     deleted = await store.delete_by_source("no-such-file.md")
     assert deleted == 0
+
+
+# ------------------------------------------------------------------
+# Concurrency / write lock tests
+# ------------------------------------------------------------------
+
+
+async def test_concurrent_upsert_entities(store: GraphStore):
+    """Concurrent upsert calls should not lose data thanks to write lock."""
+    entities = [
+        GraphEntity(name=f"Entity{i}", entity_type="concept", source_path=f"n{i}.md")
+        for i in range(20)
+    ]
+
+    await asyncio.gather(*(store.upsert_entity(e) for e in entities))
+
+    count = await store.count_entities()
+    assert count == 20
+
+
+async def test_concurrent_read_during_write(store: GraphStore):
+    """Reads should work concurrently with writes (WAL mode)."""
+    e = GraphEntity(name="Alpha", entity_type="concept", source_path="a.md")
+    await store.upsert_entity(e)
+    await store.commit()
+
+    async def _read():
+        return await store.search_entities("alpha")
+
+    async def _write():
+        for i in range(5):
+            e2 = GraphEntity(name=f"Beta{i}", entity_type="concept", source_path=f"b{i}.md")
+            await store.upsert_entity(e2)
+        await store.commit()
+
+    results = await asyncio.gather(_read(), _write())
+    # Read should return at least Alpha
+    assert len(results[0]) >= 1

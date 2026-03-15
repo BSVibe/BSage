@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 if TYPE_CHECKING:
+    from bsage.garden.graph_models import GraphEntity
     from bsage.garden.graph_store import GraphStore
     from bsage.garden.vault import Vault
 
@@ -95,7 +96,7 @@ class GraphRetriever:
                 chunk = content[:remaining]
                 parts.append(chunk)
                 total += len(chunk)
-            except Exception:
+            except (FileNotFoundError, OSError, UnicodeDecodeError):
                 logger.debug("graph_retrieve_read_failed", path=path)
 
         logger.info(
@@ -107,10 +108,8 @@ class GraphRetriever:
         )
         return "\n---\n".join(parts)
 
-    async def _match_entities(self, query: str, *, limit: int = 5) -> list:
+    async def _match_entities(self, query: str, *, limit: int = 5) -> list[GraphEntity]:
         """Extract entity names from query and find matches in the graph."""
-        from bsage.garden.graph_models import GraphEntity
-
         # Strategy: try full query first, then individual words
         results: list[GraphEntity] = []
         seen_ids: set[str] = set()

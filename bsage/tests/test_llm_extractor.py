@@ -211,3 +211,44 @@ async def test_auto_evolve_disabled_by_default(ontology, mock_llm_fn):
         await extractor.extract(f"note{i}.md", f"{'M' * 200}{i}")
 
     assert not ontology.is_valid_entity_type("food")
+
+
+# ---------------------------------------------------------------------------
+# LRU cache tests
+# ---------------------------------------------------------------------------
+
+
+async def test_processed_hashes_lru_evicts_oldest(ontology, mock_llm_fn):
+    """When cache exceeds MAX_CACHE_SIZE, oldest entries are evicted."""
+    from bsage.garden.llm_extractor import _MAX_CACHE_SIZE
+
+    extractor = LLMExtractor(mock_llm_fn, ontology)
+    mock_llm_fn.return_value = _llm_response()
+
+    # Fill cache to max
+    for i in range(_MAX_CACHE_SIZE + 5):
+        await extractor.extract(f"note{i}.md", f"{'X' * 200} unique {i}")
+
+    assert len(extractor._processed_hashes) <= _MAX_CACHE_SIZE
+
+
+async def test_processed_hashes_lru_keeps_recent(ontology, mock_llm_fn):
+    """Recently accessed entries survive eviction."""
+    extractor = LLMExtractor(mock_llm_fn, ontology)
+    mock_llm_fn.return_value = _llm_response()
+
+    # Insert two entries
+    body_a = "A" * 200
+    body_b = "B" * 200
+    await extractor.extract("a.md", body_a)
+    await extractor.extract("b.md", body_b)
+
+    # Re-access a.md to move it to end (most recent)
+    entities, _ = await extractor.extract("a.md", body_a)
+    assert entities == []  # cache hit returns empty
+
+    # Verify a.md is still in cache (moved to end)
+    import hashlib
+
+    hash_a = hashlib.sha256(body_a.encode()).hexdigest()[:16]
+    assert f"a.md:{hash_a}" in extractor._processed_hashes

@@ -98,6 +98,8 @@ class GraphStore:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._db: aiosqlite.Connection | None = None
+        self._write_lock: asyncio.Lock = asyncio.Lock()
+        self._rebuild_lock: asyncio.Lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """Open connection, enable WAL mode, and create tables."""
@@ -117,7 +119,8 @@ class GraphStore:
 
     async def commit(self) -> None:
         """Commit the current transaction."""
-        await self._conn.commit()
+        async with self._write_lock:
+            await self._conn.commit()
 
     @property
     def _conn(self) -> aiosqlite.Connection:
@@ -138,6 +141,10 @@ class GraphStore:
         added so that ``delete_by_source`` can correctly determine whether
         the entity should be removed when one of its sources is deleted.
         """
+        async with self._write_lock:
+            return await self._upsert_entity_locked(entity)
+
+    async def _upsert_entity_locked(self, entity: GraphEntity) -> str:
         norm = _normalize(entity.name)
         row = await self._fetchone(
             "SELECT id FROM entities WHERE name_normalized = ? AND entity_type = ?",
@@ -191,6 +198,10 @@ class GraphStore:
 
     async def upsert_relationship(self, rel: GraphRelationship) -> str:
         """Insert a relationship, skipping duplicates on (source_id, target_id, rel_type)."""
+        async with self._write_lock:
+            return await self._upsert_relationship_locked(rel)
+
+    async def _upsert_relationship_locked(self, rel: GraphRelationship) -> str:
         row = await self._fetchone(
             """SELECT id FROM relationships
                WHERE source_id = ? AND target_id = ? AND rel_type = ?""",
@@ -227,6 +238,10 @@ class GraphStore:
 
         Returns the number of deleted entities.
         """
+        async with self._write_lock:
+            return await self._delete_by_source_locked(source_path)
+
+    async def _delete_by_source_locked(self, source_path: str) -> int:
         # 1. Delete relationships from this source
         await self._conn.execute("DELETE FROM relationships WHERE source_path = ?", (source_path,))
 
@@ -427,7 +442,15 @@ class GraphStore:
 
         Returns a dict with ``notes_updated``, ``notes_skipped``,
         ``entities``, and ``relationships`` counts.
+
+        Uses ``_rebuild_lock`` to prevent concurrent rebuilds.
         """
+        async with self._rebuild_lock:
+            return await self._rebuild_from_vault_locked(vault, extractor)
+
+    async def _rebuild_from_vault_locked(
+        self, vault: Vault, extractor: GraphExtractor
+    ) -> dict[str, int]:
         count = 0
         skipped = 0
         for subdir in ("seeds", "garden"):
@@ -450,23 +473,24 @@ class GraphStore:
                         skipped += 1
                         continue
 
-                    await self.delete_by_source(rel_path)
-                    entities, rels = extractor.extract_from_note(rel_path, content)
-                    id_map: dict[str, str] = {}
-                    for entity in entities:
-                        resolved_id = await self.upsert_entity(entity)
-                        id_map[entity.id] = resolved_id
-                    for rel in rels:
-                        resolved = dataclasses.replace(
-                            rel,
-                            source_id=id_map.get(rel.source_id, rel.source_id),
-                            target_id=id_map.get(rel.target_id, rel.target_id),
-                        )
-                        await self.upsert_relationship(resolved)
-                    await self.set_source_hash(rel_path, content_hash)
-                    await self._conn.commit()
+                    async with self._write_lock:
+                        await self._delete_by_source_locked(rel_path)
+                        entities, rels = extractor.extract_from_note(rel_path, content)
+                        id_map: dict[str, str] = {}
+                        for entity in entities:
+                            resolved_id = await self._upsert_entity_locked(entity)
+                            id_map[entity.id] = resolved_id
+                        for rel in rels:
+                            resolved = dataclasses.replace(
+                                rel,
+                                source_id=id_map.get(rel.source_id, rel.source_id),
+                                target_id=id_map.get(rel.target_id, rel.target_id),
+                            )
+                            await self._upsert_relationship_locked(resolved)
+                        await self.set_source_hash(rel_path, content_hash)
+                        await self._conn.commit()
                     count += 1
-                except Exception:
+                except (FileNotFoundError, OSError, UnicodeDecodeError):
                     logger.debug("graph_rebuild_note_failed", path=rel_path, exc_info=True)
 
         return {

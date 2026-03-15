@@ -160,7 +160,7 @@ class AgentLoop:
         "- Preserve the original language (Korean, English, etc.)"
     )
 
-    @cached_property
+    @property
     def _refine_prompt(self) -> str:
         """Load seed-refiner prompt from PromptRegistry, falling back to inline."""
         if self._prompt_registry:
@@ -193,7 +193,7 @@ class AgentLoop:
             if isinstance(parsed, dict) and "title" in parsed and "content" in parsed:
                 logger.info("seed_refined", plugin_name=plugin_name)
                 return parsed
-        except Exception:
+        except (json.JSONDecodeError, ValueError, TypeError, RuntimeError, OSError):
             logger.debug(
                 "seed_refine_failed_using_raw",
                 plugin_name=plugin_name,

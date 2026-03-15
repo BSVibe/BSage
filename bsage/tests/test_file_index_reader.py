@@ -218,3 +218,42 @@ async def test_path_to_category_two_parts() -> None:
 @pytest.mark.asyncio()
 async def test_path_to_category_single_part() -> None:
     assert FileIndexReader._path_to_category("orphan.md") == ""
+
+
+# ---------------------------------------------------------------------------
+# _loaded flag behavior
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_loaded_flag_stays_false_on_empty_vault(tmp_path: Path) -> None:
+    """When vault is empty, _loaded stays False so next call retries."""
+    vault = Vault(tmp_path)
+    reader = FileIndexReader(vault=vault)
+
+    await reader._ensure_loaded()
+    assert reader._loaded is False  # no entries found → not marked loaded
+
+    # Second call should retry (not short-circuit)
+    # Create a note before second call
+    idea_dir = tmp_path / "garden" / "idea"
+    idea_dir.mkdir(parents=True)
+    (idea_dir / "test.md").write_text("---\ntitle: Test\ntype: idea\n---\n", encoding="utf-8")
+
+    await reader._ensure_loaded()
+    assert reader._loaded is True
+    summaries = await reader.get_summaries("garden/idea")
+    assert len(summaries) == 1
+
+
+@pytest.mark.asyncio()
+async def test_loaded_flag_true_when_entries_found(tmp_path: Path) -> None:
+    """When vault has notes, _loaded becomes True after first load."""
+    vault = Vault(tmp_path)
+    idea_dir = tmp_path / "garden" / "idea"
+    idea_dir.mkdir(parents=True)
+    (idea_dir / "note.md").write_text("---\ntitle: A\ntype: idea\n---\n", encoding="utf-8")
+
+    reader = FileIndexReader(vault=vault)
+    await reader._ensure_loaded()
+    assert reader._loaded is True

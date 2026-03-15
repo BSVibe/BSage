@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from string import Template
 from typing import TYPE_CHECKING
 
 import structlog
@@ -18,26 +20,29 @@ logger = structlog.get_logger(__name__)
 
 _MIN_BODY_CHARS = 100
 
-_SYSTEM_PROMPT = """You are a knowledge graph extraction assistant.
+_MAX_CACHE_SIZE = 10_000
+
+_SYSTEM_PROMPT_TEMPLATE = Template("""\
+You are a knowledge graph extraction assistant.
 Extract entities and relationships from the given text.
 
 CONSTRAINTS:
-- Entity types MUST be one of: {entity_types}
-- Relationship types MUST be one of: {relationship_types}
+- Entity types MUST be one of: $entity_types
+- Relationship types MUST be one of: $relationship_types
 - Only extract clearly stated facts, not speculation.
 
 Respond with ONLY valid JSON in this format:
-{{
+{
   "entities": [
-    {{"name": "entity name", "entity_type": "type", "properties": {{}}}}
+    {"name": "entity name", "entity_type": "type", "properties": {}}
   ],
   "relationships": [
-    {{"source": "entity name", "target": "entity name", "rel_type": "type"}}
+    {"source": "entity name", "target": "entity name", "rel_type": "type"}
   ]
-}}
+}
 
 If no entities or relationships can be extracted, respond with:
-{{"entities": [], "relationships": []}}"""
+{"entities": [], "relationships": []}""")
 
 
 class LLMExtractor:
@@ -58,7 +63,7 @@ class LLMExtractor:
         self._llm_fn = llm_fn
         self._ontology = ontology
         self._auto_evolve = auto_evolve
-        self._processed_hashes: set[str] = set()
+        self._processed_hashes: OrderedDict[str, None] = OrderedDict()
         self._unknown_type_counts: dict[str, int] = {}
         self._unknown_threshold: int = 3
 
@@ -82,13 +87,16 @@ class LLMExtractor:
         content_hash = hashlib.sha256(body_text.encode()).hexdigest()[:16]
         cache_key = f"{rel_path}:{content_hash}"
         if cache_key in self._processed_hashes:
+            self._processed_hashes.move_to_end(cache_key)
             return [], []
-        self._processed_hashes.add(cache_key)
+        self._processed_hashes[cache_key] = None
+        if len(self._processed_hashes) > _MAX_CACHE_SIZE:
+            self._processed_hashes.popitem(last=False)
 
         # Build prompt with ontology constraints
         entity_types = ", ".join(self._ontology.get_entity_types().keys())
         relationship_types = ", ".join(self._ontology.get_relationship_types().keys())
-        system = _SYSTEM_PROMPT.format(
+        system = _SYSTEM_PROMPT_TEMPLATE.safe_substitute(
             entity_types=entity_types,
             relationship_types=relationship_types,
         )
@@ -96,7 +104,7 @@ class LLMExtractor:
         try:
             response = await self._llm_fn(system, body_text)
             return await self._parse_response(response, rel_path)
-        except Exception:
+        except (json.JSONDecodeError, ValueError, TypeError, RuntimeError, OSError):
             logger.warning("llm_extraction_failed", path=rel_path, exc_info=True)
             return [], []
 

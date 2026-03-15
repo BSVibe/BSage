@@ -41,7 +41,7 @@ class GraphSubscriber:
                 rel_path = str(abs_path.relative_to(self._vault.root))
                 deleted = await self._store.delete_by_source(rel_path)
                 logger.info("graph_note_deleted", path=rel_path, removed=deleted)
-            except Exception:
+            except (ValueError, FileNotFoundError, OSError):
                 logger.warning("graph_on_delete_failed", path=path_str, exc_info=True)
             return
 
@@ -88,5 +88,5 @@ class GraphSubscriber:
                 entities=len(entities),
                 relationships=len(relationships),
             )
-        except Exception:
+        except (ValueError, FileNotFoundError, OSError, UnicodeDecodeError):
             logger.warning("graph_on_write_failed", path=path_str, exc_info=True)

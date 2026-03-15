@@ -583,7 +583,7 @@ class GardenWriter:
             if not abs_path.exists():
                 return
             content = await self._vault.read_note_content(abs_path)
-        except Exception:
+        except (FileNotFoundError, OSError, UnicodeDecodeError):
             return
 
         if not content.startswith("---\n"):
@@ -598,7 +598,7 @@ class GardenWriter:
 
         try:
             metadata = yaml.safe_load(fm_str)
-        except Exception:
+        except (yaml.YAMLError, ValueError):
             return
         if not isinstance(metadata, dict):
             return

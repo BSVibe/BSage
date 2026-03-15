@@ -116,7 +116,7 @@ class FileIndexReader:
         if self._loaded:
             return
         await self._load_all()
-        self._loaded = True
+        self._loaded = bool(self._entries)
 
     async def _load_all(self) -> None:
         """Scan vault notes and populate _entries on first access.
@@ -128,7 +128,7 @@ class FileIndexReader:
         for cat in categories:
             try:
                 await self._scan_category(cat)
-            except Exception:
+            except (FileNotFoundError, OSError):
                 logger.debug("load_scan_failed", category=cat, exc_info=True)
         logger.debug("file_index_loaded", entries=len(self._entries))
 
@@ -136,7 +136,7 @@ class FileIndexReader:
         """Scan a vault category and populate _entries."""
         try:
             note_paths = await self._vault.read_notes(category)
-        except Exception:
+        except (FileNotFoundError, OSError):
             note_paths = []
 
         for abs_path in note_paths:
@@ -144,7 +144,7 @@ class FileIndexReader:
             try:
                 content = await self._vault.read_note_content(abs_path)
                 self._entries[rel_path] = _note_to_summary(rel_path, content)
-            except Exception:
+            except (FileNotFoundError, OSError, UnicodeDecodeError, ValueError, KeyError):
                 logger.debug("scan_note_failed", path=rel_path, exc_info=True)
 
         # Also scan subdirectories (e.g. seeds/telegram-input/)
@@ -164,7 +164,7 @@ class FileIndexReader:
                     rel = str(p.relative_to(self._vault.root))
                     content = await self._vault.read_note_content(p)
                     self._entries[rel] = _note_to_summary(rel, content)
-            except Exception:
+            except (FileNotFoundError, OSError, UnicodeDecodeError, ValueError):
                 logger.debug("scan_subdir_failed", subdir=child_sub, exc_info=True)
 
     async def get_summaries(self, category: str) -> list[NoteSummary]:
@@ -213,7 +213,7 @@ class FileIndexReader:
         for cat in categories:
             try:
                 await self.rebuild(cat)
-            except Exception:
+            except (FileNotFoundError, OSError, UnicodeDecodeError, ValueError):
                 logger.warning("rebuild_failed", category=cat, exc_info=True)
         await self._write_overview()
 
