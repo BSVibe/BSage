@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS entities (
     source_path TEXT NOT NULL,
     properties TEXT NOT NULL DEFAULT '{}',
     confidence REAL NOT NULL DEFAULT 1.0,
+    knowledge_layer TEXT NOT NULL DEFAULT 'semantic',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -50,6 +51,8 @@ CREATE TABLE IF NOT EXISTS relationships (
     source_path TEXT NOT NULL,
     properties TEXT NOT NULL DEFAULT '{}',
     confidence REAL NOT NULL DEFAULT 1.0,
+    weight REAL NOT NULL DEFAULT 0.5,
+    edge_type TEXT NOT NULL DEFAULT 'weak',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (source_id) REFERENCES entities(id) ON DELETE CASCADE,
     FOREIGN KEY (target_id) REFERENCES entities(id) ON DELETE CASCADE
@@ -155,12 +158,13 @@ class GraphStore:
             await self._conn.execute(
                 """UPDATE entities
                    SET source_path = ?, properties = ?, confidence = ?,
-                       updated_at = datetime('now')
+                       knowledge_layer = ?, updated_at = datetime('now')
                    WHERE id = ?""",
                 (
                     entity.source_path,
                     json.dumps(entity.properties),
                     entity.confidence,
+                    entity.knowledge_layer,
                     existing_id,
                 ),
             )
@@ -175,8 +179,8 @@ class GraphStore:
 
         await self._conn.execute(
             """INSERT INTO entities (id, name, name_normalized, entity_type,
-                                    source_path, properties, confidence)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                    source_path, properties, confidence, knowledge_layer)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 entity.id,
                 entity.name,
@@ -185,6 +189,7 @@ class GraphStore:
                 entity.source_path,
                 json.dumps(entity.properties),
                 entity.confidence,
+                entity.knowledge_layer,
             ),
         )
         # Record provenance for this source
@@ -212,8 +217,9 @@ class GraphStore:
 
         await self._conn.execute(
             """INSERT INTO relationships
-               (id, source_id, target_id, rel_type, source_path, properties, confidence)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (id, source_id, target_id, rel_type, source_path, properties,
+                confidence, weight, edge_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 rel.id,
                 rel.source_id,
@@ -222,6 +228,8 @@ class GraphStore:
                 rel.source_path,
                 json.dumps(rel.properties),
                 rel.confidence,
+                rel.weight,
+                rel.edge_type,
             ),
         )
         return rel.id
@@ -335,16 +343,18 @@ class GraphStore:
         sql = f"""
             SELECT r.id, r.source_id, r.target_id, r.rel_type,
                    r.source_path, r.properties, r.confidence,
+                   r.weight, r.edge_type,
                    e.id, e.name, e.name_normalized, e.entity_type,
-                   e.source_path, e.properties, e.confidence
+                   e.source_path, e.properties, e.confidence, e.knowledge_layer
             FROM relationships r
             JOIN entities e ON e.id = r.target_id
             WHERE r.source_id = ? {type_filter}
             UNION ALL
             SELECT r.id, r.source_id, r.target_id, r.rel_type,
                    r.source_path, r.properties, r.confidence,
+                   r.weight, r.edge_type,
                    e.id, e.name, e.name_normalized, e.entity_type,
-                   e.source_path, e.properties, e.confidence
+                   e.source_path, e.properties, e.confidence, e.knowledge_layer
             FROM relationships r
             JOIN entities e ON e.id = r.source_id
             WHERE r.target_id = ? {type_filter}
@@ -360,14 +370,17 @@ class GraphStore:
                 id=row[0],
                 properties=json.loads(row[5]),
                 confidence=row[6],
+                weight=row[7],
+                edge_type=row[8],
             )
             ent = GraphEntity(
-                name=row[8],
-                entity_type=row[10],
-                source_path=row[11],
-                id=row[7],
-                properties=json.loads(row[12]),
-                confidence=row[13],
+                name=row[10],
+                entity_type=row[12],
+                source_path=row[13],
+                id=row[9],
+                properties=json.loads(row[14]),
+                confidence=row[15],
+                knowledge_layer=row[16],
             )
             results.append((rel, ent))
         return results
@@ -578,7 +591,11 @@ class GraphStore:
 
     @staticmethod
     def _row_to_entity(row: Any) -> GraphEntity:
-        """Convert a raw SQLite row to a GraphEntity."""
+        """Convert a raw SQLite row to a GraphEntity.
+
+        Expected column order: id, name, name_normalized, entity_type,
+        source_path, properties, confidence, knowledge_layer, created_at, updated_at.
+        """
         return GraphEntity(
             name=row[1],
             entity_type=row[3],
@@ -586,4 +603,5 @@ class GraphStore:
             id=row[0],
             properties=json.loads(row[5]),
             confidence=row[6],
+            knowledge_layer=row[7],
         )

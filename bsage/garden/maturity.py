@@ -31,20 +31,12 @@ MATURITY_ORDER: list[NoteMaturity] = [
     NoteMaturity.EVERGREEN,
 ]
 
-# Legacy status mapping
-_LEGACY_MAP: dict[str, NoteMaturity] = {
-    "growing": NoteMaturity.SEED,
-}
-
 
 def normalize_status(status: str) -> NoteMaturity:
     """Normalize a status string to a NoteMaturity value.
 
-    Maps legacy values (e.g. ``growing``) to their canonical equivalents
-    and falls back to ``SEED`` for unknown statuses.
+    Returns ``SEED`` for unknown statuses.
     """
-    if status in _LEGACY_MAP:
-        return _LEGACY_MAP[status]
     try:
         return NoteMaturity(status)
     except ValueError:
