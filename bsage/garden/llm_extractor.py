@@ -65,6 +65,7 @@ class LLMExtractor:
         self._auto_evolve = auto_evolve
         self._processed_hashes: OrderedDict[str, None] = OrderedDict()
         self._unknown_type_counts: dict[str, int] = {}
+        self._unknown_rel_type_counts: dict[str, int] = {}
         self._unknown_threshold: int = 3
 
     async def extract(
@@ -157,8 +158,10 @@ class LLMExtractor:
             if not source_name or not target_name:
                 continue
 
-            # Validate type against ontology
-            rel_type = self._ontology.validate_relationship_type(rel_type)
+            # Validate type against ontology; track unknowns for evolution
+            if not self._ontology.is_valid_relationship_type(rel_type):
+                await self._track_unknown_rel_type(rel_type)
+                rel_type = self._ontology.validate_relationship_type(rel_type)
 
             source_id = entity_name_map.get(source_name)
             target_id = entity_name_map.get(target_name)
@@ -203,3 +206,16 @@ class LLMExtractor:
             if added:
                 logger.info("ontology_auto_evolved", new_type=entity_type)
                 del self._unknown_type_counts[entity_type]
+
+    async def _track_unknown_rel_type(self, rel_type: str) -> None:
+        """Track unknown relationship types and auto-evolve ontology when threshold is reached."""
+        if not self._auto_evolve:
+            return
+        self._unknown_rel_type_counts[rel_type] = self._unknown_rel_type_counts.get(rel_type, 0) + 1
+        if self._unknown_rel_type_counts[rel_type] >= self._unknown_threshold:
+            added = await self._ontology.add_relationship_type(
+                rel_type, f"Auto-discovered relationship: {rel_type}"
+            )
+            if added:
+                logger.info("ontology_rel_type_auto_evolved", new_type=rel_type)
+                del self._unknown_rel_type_counts[rel_type]
