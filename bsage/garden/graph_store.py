@@ -487,6 +487,28 @@ class GraphStore:
         return row[0] if row else None
 
     # ------------------------------------------------------------------
+    # Source of Truth — confirmation
+    # ------------------------------------------------------------------
+
+    async def confirm_entities_by_source(self, source_path: str) -> int:
+        """Mark all entities from a source as freshly confirmed (updated_at = now).
+
+        Called when a note is manually edited — the user's edits are
+        the source of truth, so confidence resets its decay clock.
+
+        Returns:
+            Number of entities confirmed.
+        """
+        async with self._write_lock:
+            cursor = await self._conn.execute(
+                """UPDATE entities SET updated_at = datetime('now')
+                   WHERE source_path = ?""",
+                (source_path,),
+            )
+            await self._conn.commit()
+            return cursor.rowcount
+
+    # ------------------------------------------------------------------
     # Source content hashing (incremental rebuild)
     # ------------------------------------------------------------------
 

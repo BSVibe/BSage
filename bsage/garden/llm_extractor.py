@@ -178,6 +178,18 @@ class LLMExtractor:
                 )
                 continue
 
+            # v2.2: Domain/range validation — reject structurally invalid edges
+            if not self._check_domain_range(
+                rel_type, source_name, target_name, entity_name_map, entities
+            ):
+                logger.debug(
+                    "llm_relationship_domain_range_rejected",
+                    rel_type=rel_type,
+                    source=source_name,
+                    target=target_name,
+                )
+                continue
+
             relationships.append(
                 GraphRelationship(
                     source_id=source_id,
@@ -195,6 +207,48 @@ class LLMExtractor:
             relationships=len(relationships),
         )
         return entities, relationships
+
+    def _check_domain_range(
+        self,
+        rel_type: str,
+        source_name: str,
+        target_name: str,
+        entity_name_map: dict[str, str],
+        entities: list[GraphEntity],
+    ) -> bool:
+        """Validate that source/target entity types match the relation's domain/range.
+
+        Returns True if valid or if no constraints exist.
+        """
+        rel_info = self._ontology.get_relation_types().get(rel_type)
+        if not rel_info:
+            return True  # unknown type, let fallback handle it
+
+        domain = rel_info.get("domain", "*")
+        range_ = rel_info.get("range", "*")
+        if domain == "*" and range_ == "*":
+            return True
+
+        # Build entity type lookup from current extraction
+        type_lookup: dict[str, str] = {}
+        for e in entities:
+            type_lookup[e.name] = e.entity_type
+
+        source_type = type_lookup.get(source_name, "concept")
+        target_type = type_lookup.get(target_name, "concept")
+
+        def _matches(constraint: str | list[str], actual: str) -> bool:
+            if constraint == "*":
+                return True
+            if isinstance(constraint, list):
+                return actual in constraint
+            return actual == constraint
+
+        if not _matches(domain, source_type):
+            return False
+        if not _matches(range_, target_type):
+            return False
+        return True
 
     async def _track_unknown_type(self, entity_type: str) -> None:
         """Track unknown entity types and auto-evolve ontology when threshold is reached."""

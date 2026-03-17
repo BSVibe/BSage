@@ -61,7 +61,8 @@ class GraphSubscriber:
             rel_path = str(abs_path.relative_to(self._vault.root))
             content = await self._vault.read_note_content(abs_path)
 
-            # Full re-extract: delete old data, insert fresh
+            # Source of Truth: re-extract from markdown (the canonical source).
+            # On NOTE_UPDATED, also reset the decay clock for affected entities.
             await self._store.delete_by_source(rel_path)
 
             entities, relationships = self._extractor.extract_from_note(rel_path, content)
@@ -82,6 +83,11 @@ class GraphSubscriber:
                 await self._store.upsert_relationship(resolved)
 
             await self._store.commit()
+
+            # Confirm entities to reset decay clock (Source of Truth policy)
+            if event.event_type == EventType.NOTE_UPDATED:
+                await self._store.confirm_entities_by_source(rel_path)
+
             logger.info(
                 "graph_note_indexed",
                 path=rel_path,

@@ -9,6 +9,7 @@ import structlog
 if TYPE_CHECKING:
     from bsage.garden.graph_models import GraphEntity
     from bsage.garden.graph_store import GraphStore
+    from bsage.garden.ontology import OntologyRegistry
     from bsage.garden.vault import Vault
 
 logger = structlog.get_logger(__name__)
@@ -33,9 +34,15 @@ class GraphRetriever:
     and returns formatted context including relationship information.
     """
 
-    def __init__(self, graph_store: GraphStore, vault: Vault) -> None:
+    def __init__(
+        self,
+        graph_store: GraphStore,
+        vault: Vault,
+        ontology: OntologyRegistry | None = None,
+    ) -> None:
         self._store = graph_store
         self._vault = vault
+        self._ontology = ontology
 
     async def retrieve(
         self,
@@ -70,9 +77,15 @@ class GraphRetriever:
             neighbors = await self._store.query_neighbors(entity.id)
             graph_lines.append(f"\nEntity: **{entity.name}** ({entity.entity_type})")
             for rel, neighbor in neighbors:
-                direction = "->" if rel.source_id == entity.id else "<-"
+                if rel.source_id == entity.id:
+                    label = rel.rel_type
+                    direction = "->"
+                else:
+                    # v2.2: use inverse relation name for incoming edges
+                    label = self._resolve_inverse(rel.rel_type)
+                    direction = "<-"
                 graph_lines.append(
-                    f"  {direction} {rel.rel_type} {direction} "
+                    f"  {direction} {label} {direction} "
                     f"**{neighbor.name}** ({neighbor.entity_type})"
                 )
                 if neighbor.source_path:
@@ -155,3 +168,11 @@ class GraphRetriever:
                         break
 
         return results[:limit]
+
+    def _resolve_inverse(self, rel_type: str) -> str:
+        """Return the inverse relation name, falling back to the original."""
+        if self._ontology:
+            inv = self._ontology.get_inverse(rel_type)
+            if inv:
+                return inv
+        return rel_type

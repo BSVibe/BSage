@@ -52,13 +52,14 @@ async def test_extract_entities(ontology, mock_llm_fn):
 
 
 async def test_extract_relationships(ontology, mock_llm_fn):
+    # v2.2: "uses" has domain=person, range=[tool, concept]
     mock_llm_fn.return_value = _llm_response(
         entities=[
-            {"name": "BSage", "entity_type": "project"},
+            {"name": "Alice", "entity_type": "person"},
             {"name": "Python", "entity_type": "tool"},
         ],
         relationships=[
-            {"source": "BSage", "target": "Python", "rel_type": "uses"},
+            {"source": "Alice", "target": "Python", "rel_type": "uses"},
         ],
     )
 

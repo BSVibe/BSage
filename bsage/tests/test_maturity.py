@@ -96,43 +96,44 @@ class TestMaturityEvaluator:
         assert result == NoteMaturity.SEEDLING
 
     async def test_seedling_to_budding_with_enough_sources(self) -> None:
-        graph = _mock_graph(source_count=4)
+        # seedling has rel_count>=2 (how it became seedling) + enough sources
+        graph = _mock_graph(rel_count=3, source_count=4)
         evaluator = MaturityEvaluator(graph, MaturityConfig())
         result = await evaluator.evaluate("garden/idea/test.md", "seedling")
         assert result == NoteMaturity.BUDDING
 
     async def test_seedling_stays_with_too_few_sources(self) -> None:
-        graph = _mock_graph(source_count=2)
+        graph = _mock_graph(rel_count=3, source_count=2)
         evaluator = MaturityEvaluator(graph, MaturityConfig())
         result = await evaluator.evaluate("garden/idea/test.md", "seedling")
         assert result is None
 
     async def test_budding_to_evergreen(self) -> None:
-        graph = _mock_graph(rel_count=6, updated_at="2026-01-01T00:00:00")
+        graph = _mock_graph(rel_count=6, source_count=4, updated_at="2026-01-01T00:00:00")
         evaluator = MaturityEvaluator(graph, MaturityConfig())
         result = await evaluator.evaluate("garden/idea/test.md", "budding")
         assert result == NoteMaturity.EVERGREEN
 
     async def test_budding_stays_when_not_stable_enough(self) -> None:
-        graph = _mock_graph(rel_count=6, updated_at="2026-03-14T00:00:00")
+        graph = _mock_graph(rel_count=6, source_count=4, updated_at="2026-03-14T00:00:00")
         evaluator = MaturityEvaluator(graph, MaturityConfig())
         result = await evaluator.evaluate("garden/idea/test.md", "budding")
         assert result is None
 
     async def test_budding_stays_when_too_few_relationships(self) -> None:
-        graph = _mock_graph(rel_count=3, updated_at="2026-01-01T00:00:00")
+        graph = _mock_graph(rel_count=3, source_count=4, updated_at="2026-01-01T00:00:00")
         evaluator = MaturityEvaluator(graph, MaturityConfig())
         result = await evaluator.evaluate("garden/idea/test.md", "budding")
         assert result is None
 
     async def test_budding_stays_when_no_updated_at(self) -> None:
-        graph = _mock_graph(rel_count=6, updated_at=None)
+        graph = _mock_graph(rel_count=6, source_count=4, updated_at=None)
         evaluator = MaturityEvaluator(graph, MaturityConfig())
         result = await evaluator.evaluate("garden/idea/test.md", "budding")
         assert result is None
 
     async def test_evergreen_no_further_promotion(self) -> None:
-        graph = _mock_graph(rel_count=10)
+        graph = _mock_graph(rel_count=10, source_count=5)
         evaluator = MaturityEvaluator(graph, MaturityConfig())
         result = await evaluator.evaluate("garden/idea/test.md", "evergreen")
         assert result is None
@@ -154,3 +155,40 @@ class TestMaturityEvaluator:
         evaluator = MaturityEvaluator(graph, config)
         result = await evaluator.evaluate("garden/idea/test.md", "seed")
         assert result == NoteMaturity.SEEDLING
+
+
+class TestMaturityDemotion:
+    """v2.2: Test demotion when graph support drops below thresholds."""
+
+    async def test_evergreen_demotes_to_budding(self) -> None:
+        # Relationships drop below evergreen threshold (5)
+        graph = _mock_graph(rel_count=2)
+        evaluator = MaturityEvaluator(graph, MaturityConfig())
+        result = await evaluator.evaluate("test.md", "evergreen")
+        assert result == NoteMaturity.BUDDING
+
+    async def test_budding_demotes_to_seedling(self) -> None:
+        # Sources drop below budding threshold (3)
+        graph = _mock_graph(rel_count=5, source_count=1)
+        evaluator = MaturityEvaluator(graph, MaturityConfig())
+        result = await evaluator.evaluate("test.md", "budding")
+        assert result == NoteMaturity.SEEDLING
+
+    async def test_seedling_demotes_to_seed(self) -> None:
+        # Relationships drop below seedling threshold (2)
+        graph = _mock_graph(rel_count=0)
+        evaluator = MaturityEvaluator(graph, MaturityConfig())
+        result = await evaluator.evaluate("test.md", "seedling")
+        assert result == NoteMaturity.SEED
+
+    async def test_seed_cannot_demote(self) -> None:
+        graph = _mock_graph(rel_count=0)
+        evaluator = MaturityEvaluator(graph, MaturityConfig())
+        result = await evaluator.evaluate("test.md", "seed")
+        assert result is None  # no demotion from seed
+
+    async def test_evergreen_stays_if_supported(self) -> None:
+        graph = _mock_graph(rel_count=10, source_count=5)
+        evaluator = MaturityEvaluator(graph, MaturityConfig())
+        result = await evaluator.evaluate("test.md", "evergreen")
+        assert result is None  # well-supported, no change

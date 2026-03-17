@@ -54,25 +54,31 @@ class MaturityConfig:
 
 
 class MaturityEvaluator:
-    """Evaluates garden notes for maturity promotion based on graph metrics."""
+    """Evaluates garden notes for maturity promotion *and* demotion based on graph metrics."""
 
     def __init__(self, graph: GraphInterface, config: MaturityConfig) -> None:
         self._graph = graph
         self._config = config
 
     async def evaluate(self, note_path: str, current_status: str) -> NoteMaturity | None:
-        """Evaluate whether a note should be promoted.
+        """Evaluate whether a note should be promoted or demoted.
 
         Args:
-            note_path: Relative vault path of the note (e.g. ``garden/idea/foo.md``).
+            note_path: Relative vault path of the note.
             current_status: Current status string from the note's frontmatter.
 
         Returns:
-            The new maturity level if promotion is warranted, or ``None``.
+            The new maturity level if change is warranted, or ``None``.
         """
         status = normalize_status(current_status)
-        idx = MATURITY_ORDER.index(status)
 
+        # Check demotion first (higher statuses can lose support)
+        demotion = await self._check_demotion(note_path, status)
+        if demotion is not None:
+            return demotion
+
+        # Then check promotion
+        idx = MATURITY_ORDER.index(status)
         if idx >= len(MATURITY_ORDER) - 1:
             return None  # already evergreen
 
@@ -82,6 +88,35 @@ class MaturityEvaluator:
             return await self._check_seedling_to_budding(note_path)
         if status == NoteMaturity.BUDDING:
             return await self._check_budding_to_evergreen(note_path)
+
+        return None
+
+    async def _check_demotion(self, note_path: str, current: NoteMaturity) -> NoteMaturity | None:
+        """Check if a note should be demoted due to lost graph support.
+
+        Demotion rules:
+        - EVERGREEN → BUDDING: relationships drop below evergreen threshold
+        - BUDDING → SEEDLING: distinct sources drop below budding threshold
+        - SEEDLING → SEED: relationships drop below seedling threshold
+        - SEED: cannot demote further
+        """
+        if current == NoteMaturity.SEED:
+            return None
+
+        rel_count = await self._graph.count_relationships_for_entity(note_path)
+
+        if current == NoteMaturity.EVERGREEN:
+            if rel_count < self._config.evergreen_min_relationships:
+                return NoteMaturity.BUDDING
+
+        if current in (NoteMaturity.BUDDING, NoteMaturity.EVERGREEN):
+            source_count = await self._graph.count_distinct_sources(note_path)
+            if current == NoteMaturity.BUDDING and source_count < self._config.budding_min_sources:
+                return NoteMaturity.SEEDLING
+
+        if current == NoteMaturity.SEEDLING:
+            if rel_count < self._config.seedling_min_relationships:
+                return NoteMaturity.SEED
 
         return None
 
