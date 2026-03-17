@@ -250,6 +250,17 @@ class AppState:
             event_bus=self.event_bus,
         )
         self.scheduler.register_triggers(registry)
+
+        # Register built-in maintenance tasks (not plugins)
+        from bsage.core.maintenance import MaintenanceTasks
+
+        maintenance = MaintenanceTasks(
+            garden_writer=self.garden_writer,
+            graph_store=self.graph_store,
+            ontology=getattr(self, "ontology", None),
+        )
+        self.scheduler.register_maintenance(maintenance)
+
         self.scheduler.start()
         logger.info("gateway_initialized")
 

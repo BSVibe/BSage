@@ -1,79 +1,74 @@
-"""Tests for the maturity-promoter plugin."""
+"""Tests for MaintenanceTasks (replaces maturity-promoter plugin)."""
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
-def _make_context(
-    garden_root: Path,
-    rel_count: int = 0,
-    source_count: int = 0,
-    updated_at: str | None = None,
-) -> MagicMock:
-    ctx = MagicMock()
-    ctx.garden = AsyncMock()
-    ctx.garden.promote_maturity = AsyncMock(
-        return_value={"promoted": 0, "checked": 0, "details": []}
-    )
-    ctx.garden.write_action = AsyncMock()
-    ctx.graph = AsyncMock()
-    ctx.graph.count_relationships_for_entity = AsyncMock(return_value=rel_count)
-    ctx.graph.count_distinct_sources = AsyncMock(return_value=source_count)
-    ctx.graph.get_entity_updated_at = AsyncMock(return_value=updated_at)
-    return ctx
+from bsage.core.maintenance import MaintenanceTasks
 
 
-def _load_plugin():
-    """Import the plugin module and return the execute function."""
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(
-        "maturity_promoter", "plugins/maturity-promoter/plugin.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.execute
+def _make_writer():
+    writer = MagicMock()
+    writer.promote_maturity = AsyncMock(return_value={"promoted": 0, "checked": 0, "details": []})
+    writer.write_action = AsyncMock()
+    return writer
 
 
-class TestMaturityPromoterPlugin:
-    """Test maturity-promoter plugin execution."""
+def _make_graph():
+    graph = MagicMock()
+    graph.count_relationships_for_entity = AsyncMock(return_value=0)
+    graph.count_distinct_sources = AsyncMock(return_value=0)
+    graph.get_entity_updated_at = AsyncMock(return_value=None)
+    graph._fetchall = AsyncMock(return_value=[])
+    graph._write_lock = MagicMock()
+    graph._conn = MagicMock()
+    return graph
 
-    async def test_execute_calls_promote_maturity(self, tmp_path: Path) -> None:
-        execute = _load_plugin()
-        ctx = _make_context(tmp_path)
-        result = await execute(ctx)
-        ctx.garden.promote_maturity.assert_called_once_with(ctx.graph)
+
+class TestMaintenanceMaturity:
+    @pytest.mark.asyncio()
+    async def test_run_maturity_calls_promote(self):
+        writer = _make_writer()
+        tasks = MaintenanceTasks(garden_writer=writer, graph_store=MagicMock())
+        result = await tasks.run_maturity()
+        writer.promote_maturity.assert_called_once()
         assert result["promoted"] == 0
 
-    async def test_execute_logs_action_when_promoted(self, tmp_path: Path) -> None:
-        execute = _load_plugin()
-        ctx = _make_context(tmp_path)
-        ctx.garden.promote_maturity = AsyncMock(
+    @pytest.mark.asyncio()
+    async def test_run_maturity_logs_action_on_promotion(self):
+        writer = _make_writer()
+        writer.promote_maturity = AsyncMock(
             return_value={
                 "promoted": 2,
                 "checked": 10,
                 "details": [
-                    {"path": "garden/idea/a.md", "from": "seed", "to": "seedling"},
-                    {"path": "garden/idea/b.md", "from": "seedling", "to": "budding"},
+                    {"path": "ideas/a.md", "from": "seed", "to": "seedling"},
+                    {"path": "ideas/b.md", "from": "seedling", "to": "budding"},
                 ],
             }
         )
-        result = await execute(ctx)
+        tasks = MaintenanceTasks(garden_writer=writer)
+        result = await tasks.run_maturity()
         assert result["promoted"] == 2
-        ctx.garden.write_action.assert_called_once()
-        call_args = ctx.garden.write_action.call_args
-        assert call_args[0][0] == "maturity-promoter"
+        writer.write_action.assert_called_once()
+        call_args = writer.write_action.call_args
+        assert call_args[0][0] == "maintenance:maturity"
         assert "2 notes" in call_args[0][1]
 
-    async def test_execute_skips_action_when_no_promotion(self, tmp_path: Path) -> None:
-        execute = _load_plugin()
-        ctx = _make_context(tmp_path)
-        await execute(ctx)
-        ctx.garden.write_action.assert_not_called()
 
-    async def test_plugin_metadata(self) -> None:
-        execute = _load_plugin()
-        meta = execute.__plugin__
-        assert meta["name"] == "maturity-promoter"
-        assert meta["category"] == "process"
-        assert meta["trigger"]["type"] == "cron"
+class TestMaintenanceEdgeLifecycle:
+    @pytest.mark.asyncio()
+    async def test_run_edge_lifecycle_skips_without_graph(self):
+        writer = _make_writer()
+        tasks = MaintenanceTasks(garden_writer=writer, graph_store=None)
+        result = await tasks.run_edge_lifecycle()
+        assert result["status"] == "skipped"
+
+
+class TestMaintenanceOntologyEvolution:
+    @pytest.mark.asyncio()
+    async def test_run_ontology_evolution_skips_without_deps(self):
+        writer = _make_writer()
+        tasks = MaintenanceTasks(garden_writer=writer)
+        result = await tasks.run_ontology_evolution()
+        assert result["status"] == "skipped"
