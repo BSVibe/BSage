@@ -4,9 +4,8 @@ import { SettingsPage } from "./pages/SettingsPage";
 test.describe("Settings", () => {
   let settingsPage: SettingsPage;
 
-  test.beforeEach(async ({ page, mockApiResponses }) => {
+  test.beforeEach(async ({ page }) => {
     settingsPage = new SettingsPage(page);
-    await mockApiResponses();
     await settingsPage.goto();
   });
 
@@ -19,60 +18,31 @@ test.describe("Settings", () => {
   });
 
   test("Safe Mode toggle → PATCH リクエスト 確認", async ({ page }) => {
-    let patchCalled = false;
-    let patchBody: Record<string, unknown> | null = null;
-
-    page.on("response", async (response) => {
-      if (
-        response.url().includes("/api/config") &&
-        response.request().method() === "PATCH"
-      ) {
-        patchCalled = true;
-        const text = await response.text();
-        try {
-          patchBody = JSON.parse(text);
-        } catch {
-          // Response body parsing failed
-        }
-      }
-    });
-
-    const initialState = await settingsPage.isSafeModeEnabled();
+    const responsePromise = page.waitForResponse(
+      (r) => r.url().includes("/api/config") && r.request().method() === "PATCH"
+    );
     await settingsPage.toggleSafeMode();
-    await settingsPage.waitForConfigUpdate();
+    const response = await responsePromise;
 
-    expect(patchCalled).toBeTruthy();
+    expect(response.status()).toBe(200);
   });
 
   test("LLM モデル 変更 + Save → PATCH body 確認", async ({ page }) => {
-    let patchBody: Record<string, unknown> | null = null;
-
-    page.on("response", async (response) => {
-      if (
-        response.url().includes("/api/config") &&
-        response.request().method() === "PATCH"
-      ) {
-        const text = await response.text();
-        try {
-          patchBody = JSON.parse(text);
-        } catch {
-          // Response parsing failed
-        }
-      }
-    });
-
     const originalModel = await settingsPage.getLLMModel();
     const newModel = "claude-sonnet-4-6";
 
     if (originalModel !== newModel) {
       await settingsPage.setLLMModel(newModel);
+      const responsePromise = page.waitForResponse(
+        (r) =>
+          r.url().includes("/api/config") && r.request().method() === "PATCH"
+      );
       await settingsPage.clickSave();
-      await settingsPage.waitForConfigUpdate();
+      const response = await responsePromise;
+      const patchBody = await response.json();
 
       expect(patchBody).toBeTruthy();
-      if (patchBody) {
-        expect(patchBody.llm_model).toBe(newModel);
-      }
+      expect(patchBody.llm_model).toBe(newModel);
     }
   });
 

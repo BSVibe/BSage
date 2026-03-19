@@ -4,11 +4,9 @@ import { DashboardPage } from "./pages/DashboardPage";
 test.describe("Dashboard", () => {
   let dashboardPage: DashboardPage;
 
-  test.beforeEach(async ({ page, mockApiResponses }) => {
+  test.beforeEach(async ({ page }) => {
     dashboardPage = new DashboardPage(page);
-    await mockApiResponses();
     await dashboardPage.goto();
-    await dashboardPage.waitForPluginCardLoad();
   });
 
   test("プラグイン/スキル目록 レンダリング", async ({}) => {
@@ -23,11 +21,10 @@ test.describe("Dashboard", () => {
     const hasBadge = await dashboardPage.hasNeedsSetupBadge("slack-input");
     expect(hasBadge).toBeTruthy();
 
-    const setupButton = await dashboardPage
-      .getPluginCard("slack-input")
-      .then((card) =>
-        card.locator("button:has-text('Setup')").isVisible()
-      );
+    const card = dashboardPage.getPluginCard("slack-input");
+    const setupButton = await card
+      .locator("button:has-text('Setup')")
+      .isVisible();
     expect(setupButton).toBeTruthy();
   });
 
@@ -56,7 +53,7 @@ test.describe("Dashboard", () => {
 
     // The Run button might trigger an API call or navigation
     // For now just verify the button is present and clickable
-    const card = await dashboardPage.getPluginCard("shell-executor");
+    const card = dashboardPage.getPluginCard("shell-executor");
     const runButton = card.locator("button:has-text('Run')");
 
     const isVisible = await runButton.isVisible();

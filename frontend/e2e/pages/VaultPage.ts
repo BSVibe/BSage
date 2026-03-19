@@ -23,6 +23,7 @@ export class VaultPage {
 
   async goto() {
     await this.page.goto("/vault");
+    await this.heading.waitFor({ timeout: 10000 });
   }
 
   async getFileEntry(name: string): Promise<Locator> {
@@ -63,17 +64,4 @@ export class VaultPage {
     return message;
   }
 
-  async waitForTreeLoad() {
-    await this.page.waitForResponse(
-      (response) =>
-        response.url().includes("/api/vault/tree") && response.status() === 200
-    );
-  }
-
-  async waitForFileLoad() {
-    await this.page.waitForResponse(
-      (response) =>
-        response.url().includes("/api/vault/file") && response.status() === 200
-    );
-  }
 }

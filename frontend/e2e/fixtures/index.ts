@@ -1,13 +1,12 @@
-import { test as base, Page } from "@playwright/test";
+import { test as base } from "@playwright/test";
 
 /**
- * Mock API responses fixture
+ * Mock API responses fixture (auto-used)
  * Sets up HTTP request interception for all backend endpoints.
- * LLM API calls are mocked to return deterministic responses.
  */
 
-export type MockContext = {
-  mockApiResponses: () => Promise<void>;
+type CustomFixtures = {
+  mockApiResponses: void;
 };
 
 const MOCK_HEALTH_RESPONSE = {
@@ -101,103 +100,109 @@ Welcome to your personal AI agent's vault.
   },
 };
 
-export const test = base.extend<MockContext>({
-  mockApiResponses: async ({ page }, use) => {
-    /**
-     * Set up HTTP request interception.
-     * Mock responses are returned before they reach the real backend.
-     */
-
-    // Health check
-    await page.route("**/api/health", (route) => {
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(MOCK_HEALTH_RESPONSE),
-      });
-    });
-
-    // Config endpoints
-    await page.route("**/api/config", (route) => {
-      if (route.request().method() === "GET") {
+export const test = base.extend<CustomFixtures>({
+  // Auto-use fixture: routes are set up for every test automatically
+  mockApiResponses: [
+    async ({ page }, use) => {
+      // Health check
+      await page.route("**/api/health", (route) => {
         route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify(MOCK_CONFIG_RESPONSE),
+          body: JSON.stringify(MOCK_HEALTH_RESPONSE),
         });
-      } else if (route.request().method() === "PATCH") {
-        // Parse request body
-        const postData = route.request().postData();
-        if (postData) {
-          const body = JSON.parse(postData);
-          const updatedConfig = { ...MOCK_CONFIG_RESPONSE, ...body };
+      });
+
+      // Config endpoints
+      await page.route("**/api/config", (route) => {
+        if (route.request().method() === "GET") {
           route.fulfill({
             status: 200,
             contentType: "application/json",
-            body: JSON.stringify(updatedConfig),
+            body: JSON.stringify(MOCK_CONFIG_RESPONSE),
+          });
+        } else if (route.request().method() === "PATCH") {
+          const postData = route.request().postData();
+          if (postData) {
+            const body = JSON.parse(postData);
+            const updatedConfig = { ...MOCK_CONFIG_RESPONSE, ...body };
+            route.fulfill({
+              status: 200,
+              contentType: "application/json",
+              body: JSON.stringify(updatedConfig),
+            });
+          }
+        }
+      });
+
+      // Plugins endpoint
+      await page.route("**/api/plugins", (route) => {
+        if (route.request().method() === "GET") {
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(MOCK_PLUGINS_RESPONSE),
+          });
+        } else {
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ status: "ok" }),
           });
         }
-      }
-    });
-
-    // Plugins endpoint
-    await page.route("**/api/plugins", (route) => {
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(MOCK_PLUGINS_RESPONSE),
       });
-    });
 
-    // Skills endpoint
-    await page.route("**/api/skills", (route) => {
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(MOCK_SKILLS_RESPONSE),
+      // Plugin run endpoint
+      await page.route("**/api/plugins/*/run", (route) => {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ status: "started" }),
+        });
       });
-    });
 
-    // Chat endpoint (POST)
-    await page.route("**/api/chat", (route) => {
-      if (route.request().method() === "POST") {
-        // Simulate response delay
-        setTimeout(() => {
+      // Skills endpoint
+      await page.route("**/api/skills", (route) => {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(MOCK_SKILLS_RESPONSE),
+        });
+      });
+
+      // Chat endpoint
+      await page.route("**/api/chat", (route) => {
+        if (route.request().method() === "POST") {
           route.fulfill({
             status: 200,
             contentType: "application/json",
             body: JSON.stringify(MOCK_CHAT_RESPONSE),
           });
-        }, 100);
-      }
-    });
-
-    // Vault tree endpoint
-    await page.route("**/api/vault/tree", (route) => {
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(MOCK_VAULT_TREE_RESPONSE),
+        }
       });
-    });
 
-    // Vault file endpoints
-    await page.route("**/api/vault/file/**", (route) => {
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(MOCK_VAULT_FILE_RESPONSE),
+      // Vault tree endpoint
+      await page.route("**/api/vault/tree", (route) => {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(MOCK_VAULT_TREE_RESPONSE),
+        });
       });
-    });
 
-    // WebSocket endpoint (not fully mocked, just allow connection)
-    // Playwright doesn't intercept WebSockets with page.route(), so we leave this as-is
+      // Vault file endpoints
+      await page.route("**/api/vault/file/**", (route) => {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(MOCK_VAULT_FILE_RESPONSE),
+        });
+      });
 
-    await use(async () => {
-      // This is the actual function body - just a no-op
-      // The routes are already set up above
-    });
-  },
+      await use();
+    },
+    { auto: true },
+  ],
 });
 
 export { expect } from "@playwright/test";

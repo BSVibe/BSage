@@ -1,66 +1,34 @@
 import { Page, Locator } from "@playwright/test";
 
-/**
- * Page Object Model for Dashboard page
- * Encapsulates selectors and interactions for viewing plugins and skills
- */
 export class DashboardPage {
   readonly page: Page;
   readonly heading: Locator;
-  readonly pluginContainer: Locator;
-  readonly setupButtons: Locator;
 
   constructor(page: Page) {
     this.page = page;
-    this.heading = page.getByRole("heading", { name: "Dashboard" });
-    this.pluginContainer = page.locator("[data-testid='plugin-container']");
-    this.setupButtons = page.locator("button:has-text('Setup')");
+    this.heading = page.locator("h2", { hasText: "Dashboard" });
   }
 
   async goto() {
-    await this.page.goto("/dashboard");
+    await this.page.goto("/#/dashboard");
+    await this.heading.waitFor({ timeout: 10000 });
   }
 
-  async getPluginCard(name: string): Promise<Locator> {
-    return this.page.locator(`text=${name}`).first().locator("..");
+  getPluginCard(name: string): Locator {
+    return this.page.locator("h4", { hasText: name }).locator("../..");
   }
 
   async isPluginVisible(name: string): Promise<boolean> {
-    const card = await this.getPluginCard(name);
-    return await card.isVisible();
-  }
-
-  async getPluginCategory(name: string): Promise<string | null> {
-    const card = await this.getPluginCard(name);
-    return await card.locator("[data-testid='plugin-category']").textContent();
+    return await this.page.locator("h4", { hasText: name }).isVisible();
   }
 
   async hasNeedsSetupBadge(name: string): Promise<boolean> {
-    const card = await this.getPluginCard(name);
-    const badge = card.locator("text=needs-setup");
-    return await badge.isVisible();
+    const card = this.getPluginCard(name);
+    return await card.locator("text=needs setup").isVisible();
   }
 
   async hasDangerousBadge(name: string): Promise<boolean> {
-    const card = await this.getPluginCard(name);
-    const badge = card.locator("text=dangerous");
-    return await badge.isVisible();
-  }
-
-  async clickSetupButton(name: string) {
-    const card = await this.getPluginCard(name);
-    await card.locator("button:has-text('Setup')").click();
-  }
-
-  async clickRunButton(name: string) {
-    const card = await this.getPluginCard(name);
-    await card.locator("button:has-text('Run')").click();
-  }
-
-  async waitForPluginCardLoad() {
-    await this.page.waitForResponse(
-      (response) =>
-        response.url().includes("/api/plugins") && response.status() === 200
-    );
+    const card = this.getPluginCard(name);
+    return await card.locator("text=dangerous").isVisible();
   }
 }

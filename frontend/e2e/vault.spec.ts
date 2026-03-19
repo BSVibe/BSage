@@ -4,11 +4,9 @@ import { VaultPage } from "./pages/VaultPage";
 test.describe("Vault", () => {
   let vaultPage: VaultPage;
 
-  test.beforeEach(async ({ page, mockApiResponses }) => {
+  test.beforeEach(async ({ page }) => {
     vaultPage = new VaultPage(page);
-    await mockApiResponses();
     await vaultPage.goto();
-    await vaultPage.waitForTreeLoad();
   });
 
   test("ディレクトリ トリー レンダリング", async ({}) => {
@@ -21,7 +19,7 @@ test.describe("Vault", () => {
 
   test("ファイル クリック → 内容 表示", async ({}) => {
     await vaultPage.clickFileEntry("index.md");
-    await vaultPage.waitForFileLoad();
+    await vaultPage.fileContent.waitFor({ timeout: 10000 });
 
     const content = await vaultPage.getFileContentText();
     expect(content).toBeTruthy();
@@ -30,7 +28,7 @@ test.describe("Vault", () => {
 
   test("Raw/Rendered トグル", async ({}) => {
     await vaultPage.clickFileEntry("index.md");
-    await vaultPage.waitForFileLoad();
+    await vaultPage.fileContent.waitFor({ timeout: 10000 });
 
     // Check initial rendered mode
     let isRaw = await vaultPage.isRawMode();
@@ -47,7 +45,7 @@ test.describe("Vault", () => {
     expect(isRaw).toBeFalsy();
   });
 
-  test("空の vault ガイダンス メッセージ", async ({ page, mockApiResponses }) => {
+  test("空の vault ガイダンス メッセージ", async ({ page }) => {
     // Mock empty vault response
     await page.route("**/api/vault/tree", (route) => {
       route.fulfill({
@@ -61,9 +59,9 @@ test.describe("Vault", () => {
       });
     });
 
-    // Reload page
+    // Reload page and wait for it to finish loading
     await page.reload();
-    await page.waitForTimeout(500);
+    await vaultPage.heading.waitFor({ timeout: 10000 });
 
     const isEmpty = await vaultPage.isEmptyState();
     expect(isEmpty).toBeTruthy();

@@ -4,9 +4,8 @@ import { ChatPage } from "./pages/ChatPage";
 test.describe("Chat", () => {
   let chatPage: ChatPage;
 
-  test.beforeEach(async ({ page, mockApiResponses }) => {
+  test.beforeEach(async ({ page }) => {
     chatPage = new ChatPage(page);
-    await mockApiResponses();
     await chatPage.goto();
   });
 
@@ -18,7 +17,6 @@ test.describe("Chat", () => {
 
   test("メッセージ送信 → 応答表示 (mock LLM)", async ({}) => {
     await chatPage.sendMessage("Hello!");
-    await chatPage.waitForResponse();
     await chatPage.waitForAssistantMessage();
 
     const response = await chatPage.getLastMessage();
@@ -68,8 +66,9 @@ test.describe("Chat", () => {
 
     await chatPage.sendMessage("Error test");
 
-    // Wait a bit for error handling
-    await page.waitForTimeout(500);
+    // Wait for input to be re-enabled after error handling completes
+    await chatPage.input.waitFor({ state: "visible" });
+    await expect(chatPage.input).toBeEnabled({ timeout: 5000 });
 
     // Input should be re-enabled after error
     const isDisabled = await chatPage.isInputDisabled();

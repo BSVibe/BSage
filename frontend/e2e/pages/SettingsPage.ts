@@ -1,28 +1,32 @@
 import { Page, Locator } from "@playwright/test";
 
-/**
- * Page Object Model for Settings page
- * Encapsulates selectors and interactions for configuration
- */
 export class SettingsPage {
   readonly page: Page;
   readonly heading: Locator;
-  readonly llmModelInput: Locator;
   readonly safeModeToggle: Locator;
-  readonly saveButton: Locator;
-  readonly cancelButton: Locator;
 
   constructor(page: Page) {
     this.page = page;
-    this.heading = page.getByRole("heading", { name: "Settings" });
-    this.llmModelInput = page.locator('input[type="text"]').first();
+    this.heading = page.locator("h2", { hasText: "Settings" });
+    // Toggle component renders sr-only checkbox input inside a label
     this.safeModeToggle = page.getByLabel("Safe Mode");
-    this.saveButton = page.locator("button:has-text('Save')");
-    this.cancelButton = page.locator("button:has-text('Cancel')");
   }
 
   async goto() {
-    await this.page.goto("/settings");
+    await this.page.goto("/#/settings");
+    await this.heading.waitFor({ timeout: 10000 });
+  }
+
+  private getLLMModelSection(): Locator {
+    return this.page.locator("h3", { hasText: "LLM Model" }).locator("..");
+  }
+
+  get llmModelInput(): Locator {
+    return this.getLLMModelSection().locator('input[type="text"]');
+  }
+
+  get saveButton(): Locator {
+    return this.getLLMModelSection().locator("button", { hasText: "Save" });
   }
 
   async getLLMModel(): Promise<string> {
@@ -34,38 +38,21 @@ export class SettingsPage {
     await this.llmModelInput.fill(model);
   }
 
+  async clickSave() {
+    await this.saveButton.click();
+  }
+
   async toggleSafeMode() {
-    await this.safeModeToggle.click();
+    // The toggle is a visual div wrapping a hidden checkbox; click the parent
+    await this.safeModeToggle.click({ force: true });
   }
 
   async isSafeModeEnabled(): Promise<boolean> {
     return await this.safeModeToggle.isChecked();
   }
 
-  async clickSave() {
-    await this.saveButton.click();
-  }
-
-  async clickCancel() {
-    await this.cancelButton.click();
-  }
-
-  async isSaveButtonEnabled(): Promise<boolean> {
-    return !(await this.saveButton.isDisabled());
-  }
-
-  async waitForConfigUpdate() {
-    await this.page.waitForResponse(
-      (response) =>
-        response.url().includes("/api/config") &&
-        response.request().method() === "PATCH" &&
-        response.status() === 200
-    );
-  }
-
-  async getHasLLMApiKeyStatus(): Promise<string | null> {
-    return await this.page
-      .locator("[data-testid='llm-api-key-status']")
-      .textContent();
+  /** Check if API key is configured (green dot visible) */
+  async hasApiKeyConfigured(): Promise<boolean> {
+    return await this.page.locator("text=API key configured").isVisible();
   }
 }
