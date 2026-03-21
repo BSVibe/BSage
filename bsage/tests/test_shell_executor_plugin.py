@@ -1,5 +1,6 @@
 """Tests for the shell-executor plugin."""
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -106,7 +107,7 @@ async def test_execute_runs_allowed_command(tmp_path: Path) -> None:
     mock_result = MagicMock(returncode=0, stdout="hello world\n", stderr="")
     with patch.object(mod, "subprocess") as mock_sp:
         mock_sp.run.return_value = mock_result
-        mock_sp.TimeoutExpired = type("TimeoutExpired", (Exception,), {})
+        mock_sp.TimeoutExpired = subprocess.TimeoutExpired
         result = await execute_fn(ctx)
 
     assert result["success"] is True
@@ -140,7 +141,7 @@ async def test_execute_system_mode_allowed_when_safe_mode_disabled(tmp_path: Pat
     mock_result = MagicMock(returncode=0, stdout="hello world\n", stderr="")
     with patch.object(mod, "subprocess") as mock_sp:
         mock_sp.run.return_value = mock_result
-        mock_sp.TimeoutExpired = type("TimeoutExpired", (Exception,), {})
+        mock_sp.TimeoutExpired = subprocess.TimeoutExpired
         result = await execute_fn(ctx)
 
     assert result["success"] is True

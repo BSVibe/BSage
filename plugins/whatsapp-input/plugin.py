@@ -114,9 +114,9 @@ async def execute(context) -> dict:
         context.logger.warning("whatsapp_signature_invalid")
         return {"success": False, "error": "Invalid signature"}
 
-    # Parse message
-    body = webhook_data.get("body", {})
-    parsed = _parse_incoming_message(body)
+    # Parse message — webhook_data is the flattened Meta payload with extra
+    # keys (raw_body, x-hub-signature-256) injected by the Gateway.
+    parsed = _parse_incoming_message(webhook_data)
 
     if not parsed:
         return {"collected": 0, "reason": "no text message"}

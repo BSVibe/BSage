@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from pathlib import Path
@@ -157,10 +158,26 @@ def create_routes(state: AppState) -> APIRouter:
         except Exception as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+        raw_bytes = await request.body()
         try:
-            body = await request.json()
-        except Exception:
+            body = json.loads(raw_bytes)
+        except (json.JSONDecodeError, ValueError):
             body = {}
+
+        # Merge raw_body and signature header into the parsed body so
+        # existing plugins that read input_data keys directly still work,
+        # while plugins that need signature verification (e.g. whatsapp)
+        # can access raw_body and x-hub-signature-256.
+        if isinstance(body, dict):
+            body.setdefault("raw_body", raw_bytes.decode("utf-8", errors="replace"))
+            sig = request.headers.get("x-hub-signature-256", "")
+            if sig:
+                body.setdefault("x-hub-signature-256", sig)
+        else:
+            body = {
+                "data": body,
+                "raw_body": raw_bytes.decode("utf-8", errors="replace"),
+            }
 
         try:
             results = await state.agent_loop.on_input(name, body)

@@ -55,7 +55,7 @@ async def test_execute_missing_signature_rejected() -> None:
     execute_fn, _ = _load_plugin()
     payload = {"entry": [{"changes": [{"value": {"messages": []}}]}]}
     raw_body = json.dumps(payload)
-    input_data = {"body": payload, "raw_body": raw_body}  # No x-hub-signature-256 header
+    input_data = {**payload, "raw_body": raw_body}  # No x-hub-signature-256 header
     ctx = _make_context(input_data=input_data)
 
     result = await execute_fn(ctx)
@@ -71,8 +71,8 @@ async def test_execute_invalid_signature() -> None:
     payload = {"entry": [{"changes": [{"value": {"messages": []}}]}]}
     raw_body = json.dumps(payload)
     input_data = {
+        **payload,
         "x-hub-signature-256": "sha256=invalid_signature",
-        "body": payload,
         "raw_body": raw_body,
     }
     ctx = _make_context(input_data=input_data)
@@ -119,8 +119,8 @@ async def test_execute_processes_valid_message() -> None:
     ).hexdigest()
 
     input_data = {
+        **payload,
         "x-hub-signature-256": f"sha256={expected_signature}",
-        "body": payload,
         "raw_body": raw_body,
     }
     ctx = _make_context(input_data=input_data)
@@ -170,8 +170,8 @@ async def test_execute_ignores_non_text_messages() -> None:
     ).hexdigest()
 
     input_data = {
+        **payload,
         "x-hub-signature-256": f"sha256={signature}",
-        "body": payload,
         "raw_body": raw_body,
     }
     ctx = _make_context(input_data=input_data)
@@ -187,8 +187,8 @@ async def test_execute_missing_raw_body() -> None:
     execute_fn, _ = _load_plugin()
     payload = {"entry": [{"changes": [{"value": {"messages": []}}]}]}
     input_data = {
+        **payload,
         "x-hub-signature-256": "sha256=something",
-        "body": payload,
         # No raw_body — signature cannot be verified
     }
     ctx = _make_context(input_data=input_data)

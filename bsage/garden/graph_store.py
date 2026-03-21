@@ -92,6 +92,16 @@ def _normalize(name: str) -> str:
     return name.lower().strip()
 
 
+# Columns shared by both halves of the UNION ALL in query_neighbors.
+_NEIGHBOR_COLS = (
+    "r.id, r.source_id, r.target_id, r.rel_type,"
+    " r.source_path, r.properties, r.confidence,"
+    " r.weight, r.edge_type,"
+    " e.id, e.name, e.name_normalized, e.entity_type,"
+    " e.source_path, e.properties, e.confidence, e.knowledge_layer"
+)
+
+
 class GraphStore:
     """Async SQLite-backed graph storage.
 
@@ -338,7 +348,7 @@ class GraphStore:
         Returns (relationship, neighbor_entity) pairs for both outgoing
         and incoming edges.
         """
-        type_filter = "AND r.rel_type = ?" if rel_type else ""
+        type_clause = " AND r.rel_type = ?" if rel_type else ""
         params: list[Any] = [entity_id]
         if rel_type:
             params.append(rel_type)
@@ -346,25 +356,14 @@ class GraphStore:
         if rel_type:
             params.append(rel_type)
 
-        sql = f"""
-            SELECT r.id, r.source_id, r.target_id, r.rel_type,
-                   r.source_path, r.properties, r.confidence,
-                   r.weight, r.edge_type,
-                   e.id, e.name, e.name_normalized, e.entity_type,
-                   e.source_path, e.properties, e.confidence, e.knowledge_layer
-            FROM relationships r
-            JOIN entities e ON e.id = r.target_id
-            WHERE r.source_id = ? {type_filter}
-            UNION ALL
-            SELECT r.id, r.source_id, r.target_id, r.rel_type,
-                   r.source_path, r.properties, r.confidence,
-                   r.weight, r.edge_type,
-                   e.id, e.name, e.name_normalized, e.entity_type,
-                   e.source_path, e.properties, e.confidence, e.knowledge_layer
-            FROM relationships r
-            JOIN entities e ON e.id = r.source_id
-            WHERE r.target_id = ? {type_filter}
-        """
+        sql = (
+            "SELECT " + _NEIGHBOR_COLS + " FROM relationships r"
+            " JOIN entities e ON e.id = r.target_id"
+            " WHERE r.source_id = ?" + type_clause + " UNION ALL"
+            " SELECT " + _NEIGHBOR_COLS + " FROM relationships r"
+            " JOIN entities e ON e.id = r.source_id"
+            " WHERE r.target_id = ?" + type_clause
+        )
         rows = await self._fetchall(sql, tuple(params))
         results: list[tuple[GraphRelationship, GraphEntity]] = []
         for row in rows:
@@ -622,7 +621,7 @@ class GraphStore:
                         await self._conn.commit()
                     count += 1
                 except (FileNotFoundError, OSError, UnicodeDecodeError):
-                    logger.debug("graph_rebuild_note_failed", path=rel_path, exc_info=True)
+                    logger.warning("graph_rebuild_note_failed", path=rel_path, exc_info=True)
 
         return {
             "notes_updated": count,

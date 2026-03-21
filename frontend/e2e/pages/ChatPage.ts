@@ -29,10 +29,11 @@ export class ChatPage {
   }
 
   async getLastAssistantMessage() {
-    const msg = this.chatArea
-      .locator("[data-testid='assistant-message'], div.prose")
-      .last();
-    await msg.waitFor({ timeout: 10000 });
+    const locator = this.chatArea.locator(
+      "[data-testid='assistant-message'], div.prose"
+    );
+    await locator.first().waitFor({ timeout: 10000 });
+    const msg = locator.last();
     return await msg.textContent();
   }
 

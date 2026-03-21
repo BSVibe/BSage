@@ -176,7 +176,7 @@ function EntryCard({
           <Toggle
             checked={entry.enabled}
             onChange={() => onToggle(entry.name)}
-            label=""
+            label={`Toggle ${entry.name}`}
           />
         )}
       </div>

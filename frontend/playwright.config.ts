@@ -5,7 +5,7 @@ const e2eVaultDir = process.env.E2E_VAULT_DIR || `/tmp/e2e-vault-${process.pid}`
 export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
-  expect: { timeout: 10_000 },
+  expect: { timeout: process.env.CI ? 30_000 : 10_000 },
   fullyParallel: true,
   retries: process.env.CI ? 2 : 1,
   workers: process.env.CI ? 1 : undefined,

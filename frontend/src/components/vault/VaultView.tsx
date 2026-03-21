@@ -193,8 +193,15 @@ export function VaultView() {
             </a>
           );
         }
+        const isSafeUrl = href && /^https?:\/\//i.test(href);
         return (
-          <a href={href} {...props} target="_blank" rel="noopener noreferrer">
+          <a
+            href={isSafeUrl ? href : "#"}
+            {...props}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={isSafeUrl ? undefined : (e) => e.preventDefault()}
+          >
             {children}
           </a>
         );

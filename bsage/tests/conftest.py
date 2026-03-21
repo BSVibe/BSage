@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from bsage.core.plugin_loader import PluginMeta
@@ -105,7 +106,7 @@ def make_httpx_mock(*, get_response=None, post_response=None):
     from contextlib import contextmanager
     from unittest.mock import patch
 
-    mock_client = AsyncMock()
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
     if get_response is not None:
         mock_client.get = AsyncMock(return_value=get_response)
     if post_response is not None:

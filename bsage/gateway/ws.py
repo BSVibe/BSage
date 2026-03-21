@@ -84,7 +84,13 @@ def create_ws_routes(
         try:
             while True:
                 data = await websocket.receive_text()
-                message = json.loads(data)
+                try:
+                    message = json.loads(data)
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning("ws_invalid_json", data=data[:200])
+                    err = json.dumps({"type": "error", "detail": "invalid JSON"})
+                    await websocket.send_text(err)
+                    continue
                 msg_type = message.get("type")
                 logger.info("ws_message_received", type=msg_type)
 

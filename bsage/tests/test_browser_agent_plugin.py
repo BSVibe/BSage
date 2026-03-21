@@ -195,7 +195,10 @@ async def test_execute_playwright_timeout() -> None:
 
     side_effect = TimeoutError("page.goto: Timeout 30000ms exceeded.")
     with patch.object(
-        mod, "_browser_task", new_callable=AsyncMock, side_effect=side_effect,
+        mod,
+        "_browser_task",
+        new_callable=AsyncMock,
+        side_effect=side_effect,
     ):
         ctx = _make_context()
         result = await execute_fn(ctx)

@@ -315,6 +315,12 @@ async def test_notify_missing_credentials() -> None:
 
 @pytest.mark.asyncio
 async def test_notify_http_error_raises() -> None:
+    """HTTP errors from Telegram API propagate as-is.
+
+    This is intentional: unlike missing credentials (which return
+    ``{"sent": False}``), transport/server errors should surface to the
+    caller so the notification router can handle retries or alerting.
+    """
     _, notify_fn, _ = _load_plugin()
     ctx = _make_context(input_data={"message": "hi"})
 

@@ -16,7 +16,12 @@ const MOCK_HEALTH_RESPONSE = {
 const MOCK_CONFIG_RESPONSE = {
   safe_mode: false,
   has_llm_api_key: true,
+  has_embedding_api_key: true,
   llm_model: "claude-opus-4-5",
+  llm_api_base: null,
+  embedding_model: "text-embedding-3-small",
+  embedding_api_base: null,
+  disabled_entries: [],
   vault_path: "/tmp/vault",
 };
 
@@ -152,7 +157,7 @@ export const test = base.extend<CustomFixtures>({
       });
 
       // Plugin run endpoint
-      await page.route("**/api/plugins/*/run", (route) => {
+      await page.route("**/api/run/**", (route) => {
         route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -195,6 +200,54 @@ export const test = base.extend<CustomFixtures>({
           status: 200,
           contentType: "application/json",
           body: JSON.stringify(MOCK_VAULT_FILE_RESPONSE),
+        });
+      });
+
+      // Vault backlinks endpoint
+      await page.route("**/api/vault/backlinks**", (route) => {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      });
+
+      // Vault tags endpoint
+      await page.route("**/api/vault/tags", (route) => {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ tags: {} }),
+        });
+      });
+
+      // Vault graph endpoint
+      await page.route("**/api/vault/graph", (route) => {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ nodes: [], links: [] }),
+        });
+      });
+
+      // Vault search endpoint
+      await page.route("**/api/vault/search**", (route) => {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      });
+
+      // Credential fields endpoint
+      await page.route("**/api/entries/*/credentials/fields", (route) => {
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            name: "unknown",
+            fields: [],
+          }),
         });
       });
 
