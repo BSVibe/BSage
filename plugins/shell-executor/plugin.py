@@ -1,6 +1,7 @@
 """Shell/Code execution Plugin — run shell commands or Python code with configurable sandboxing."""
 
 import asyncio
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -19,12 +20,29 @@ def _validate_command(command: str, allowed_commands: list[str]) -> bool:
     """Check if a command is in the allowed list (or list is empty = allow all)."""
     if not allowed_commands:
         return True
-    # Extract the base command (first word)
-    parts = shlex.split(command)
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
     if not parts:
         return False
     base_cmd = Path(parts[0]).name if "/" in parts[0] else parts[0]
     return any(allowed.lower() == base_cmd.lower() for allowed in allowed_commands)
+
+
+def _is_symlink_escape(path: Path, boundary: Path) -> bool:
+    """Check if a path escapes the boundary via symlinks.
+
+    Uses os.path.realpath to resolve all symlinks, then verifies the
+    real path is still within the boundary.
+    """
+    real = Path(os.path.realpath(path))
+    real_boundary = Path(os.path.realpath(boundary))
+    try:
+        real.relative_to(real_boundary)
+        return False
+    except ValueError:
+        return True
 
 
 def _escape_working_dir(
@@ -39,16 +57,26 @@ def _escape_working_dir(
         requested = Path(working_dir).resolve()
 
         if sandbox_mode == "vault_only":
-            # Must be inside vault or tmp_dir
+            # Must be inside vault or tmp_dir, and no symlink escape
+            in_vault = False
             try:
-                requested.relative_to(vault_path)
-                return True, str(requested)
+                requested.relative_to(vault_path.resolve())
+                if not _is_symlink_escape(requested, vault_path):
+                    in_vault = True
             except ValueError:
+                pass
+
+            if not in_vault:
                 try:
-                    requested.relative_to(tmp_dir)
-                    return True, str(requested)
+                    requested.relative_to(tmp_dir.resolve())
+                    if not _is_symlink_escape(requested, tmp_dir):
+                        return True, str(requested)
                 except ValueError:
+                    pass
+                if not in_vault:
                     return False, f"path {requested} outside vault/tmp (sandbox_mode=vault_only)"
+
+            return True, str(requested)
 
         # sandbox_mode == "system" — allow any path
         return True, str(requested)
@@ -116,6 +144,18 @@ async def execute(context) -> dict:
     # Get sandbox settings from credentials
     creds = context.credentials or {}
     sandbox_mode = creds.get("sandbox_mode", "vault_only").lower()
+    if sandbox_mode not in ("vault_only", "system"):
+        sandbox_mode = "vault_only"
+
+    # system mode requires SafeMode approval
+    if sandbox_mode == "system":
+        safe_mode = getattr(context.config, "safe_mode", True)
+        if safe_mode:
+            return {
+                "success": False,
+                "error": "system sandbox_mode requires SafeMode to be disabled (safe_mode=false)",
+            }
+
     allowed_commands_str = creds.get("allowed_commands", "")
     allowed_commands = _parse_allowed_commands(allowed_commands_str)
 
@@ -186,8 +226,13 @@ async def execute(context) -> dict:
 def _run_subprocess(command: str, cwd: str, timeout_s: float) -> dict:
     """Run subprocess with shell=False (safe)."""
     try:
-        # Parse command without shell
-        args = shlex.split(command)
+        try:
+            args = shlex.split(command)
+        except ValueError as e:
+            return {"returncode": 1, "stdout": "", "stderr": f"Invalid command syntax: {e}"}
+
+        if not args:
+            return {"returncode": 1, "stdout": "", "stderr": "Empty command"}
 
         result = subprocess.run(
             args,

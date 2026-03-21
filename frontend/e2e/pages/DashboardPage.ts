@@ -15,11 +15,13 @@ export class DashboardPage {
   }
 
   getPluginCard(name: string): Locator {
-    // Card is a .border.rounded-lg div containing an h4 with the plugin name
-    // Go up from h4 → flex wrapper → card container (3 levels)
+    // Find the card container that contains the plugin name
+    // Use a locator chain: find h4 with plugin name, then closest card ancestor
     return this.page
-      .locator("h4", { hasText: name })
-      .locator("../../..");
+      .locator("[data-testid='plugin-card'], .border.rounded-lg", {
+        has: this.page.locator("h4", { hasText: name }),
+      })
+      .first();
   }
 
   async isPluginVisible(name: string): Promise<boolean> {
@@ -28,11 +30,11 @@ export class DashboardPage {
 
   async hasNeedsSetupBadge(name: string): Promise<boolean> {
     const card = this.getPluginCard(name);
-    return await card.locator("text=needs setup").isVisible();
+    return await card.getByText("needs setup").isVisible();
   }
 
   async hasDangerousBadge(name: string): Promise<boolean> {
     const card = this.getPluginCard(name);
-    return await card.locator("text=dangerous").isVisible();
+    return await card.getByText("dangerous").isVisible();
   }
 }

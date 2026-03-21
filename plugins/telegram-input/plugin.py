@@ -121,33 +121,37 @@ async def setup(cred_store):
     import httpx
 
     click.echo("Telegram Bot Setup")
-    bot_token = click.prompt("  Bot token (from @BotFather)")
+    bot_token = click.prompt("  Bot token (from @BotFather)", hide_input=True)
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=10.0)
-        if resp.status_code != 200:
-            click.echo(f"Error: Invalid bot token (HTTP {resp.status_code})", err=True)
-            raise SystemExit(1)
-        bot_name = resp.json().get("result", {}).get("username", "unknown")
-        click.echo(f"  Verified bot: @{bot_name}")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=10.0)
+            if resp.status_code != 200:
+                click.echo(f"Error: Invalid bot token (HTTP {resp.status_code})", err=True)
+                raise SystemExit(1)
+            bot_name = resp.json().get("result", {}).get("username", "unknown")
+            click.echo(f"  Verified bot: @{bot_name}")
 
-        # Try auto-detecting chat_id from recent messages
-        click.echo("  Checking for recent messages to auto-detect chat ID...")
-        click.echo("  (Send a message to the bot now if you haven't already)")
-        r = await client.get(
-            f"https://api.telegram.org/bot{bot_token}/getUpdates",
-            params={"limit": 10, "timeout": 10},
-            timeout=20.0,
-        )
-        detected_ids: list[tuple[int, str]] = []
-        if r.status_code == 200 and r.json().get("ok"):
-            for update in r.json().get("result", []):
-                msg = update.get("message", {})
-                chat = msg.get("chat", {})
-                cid = chat.get("id")
-                name = chat.get("first_name") or chat.get("title") or str(cid)
-                if cid and (cid, name) not in detected_ids:
-                    detected_ids.append((cid, name))
+            # Try auto-detecting chat_id from recent messages
+            click.echo("  Checking for recent messages to auto-detect chat ID...")
+            click.echo("  (Send a message to the bot now if you haven't already)")
+            r = await client.get(
+                f"https://api.telegram.org/bot{bot_token}/getUpdates",
+                params={"limit": 10, "timeout": 10},
+                timeout=20.0,
+            )
+            detected_ids: list[tuple[int, str]] = []
+            if r.status_code == 200 and r.json().get("ok"):
+                for update in r.json().get("result", []):
+                    msg = update.get("message", {})
+                    chat = msg.get("chat", {})
+                    cid = chat.get("id")
+                    name = chat.get("first_name") or chat.get("title") or str(cid)
+                    if cid and (cid, name) not in detected_ids:
+                        detected_ids.append((cid, name))
+    except httpx.HTTPError as e:
+        click.echo(f"Error: Network error during setup — {e}", err=True)
+        raise SystemExit(1) from e
 
         if detected_ids:
             click.echo("  Detected chats:")

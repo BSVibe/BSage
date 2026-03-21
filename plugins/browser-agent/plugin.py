@@ -1,6 +1,11 @@
 """Browser automation Plugin — scrape web pages, fill forms, interact with web interfaces."""
 
+import re
+
 from bsage.plugin import plugin
+
+# CSS selector validation: block obvious injection patterns
+_SELECTOR_SAFE_RE = re.compile(r"^[a-zA-Z0-9\s\.\#\-\_\[\]\=\'\"\:\(\)\,\*\>\+\~\^\\$\|\/]+$")
 
 
 @plugin(
@@ -57,6 +62,18 @@ async def execute(context) -> dict:
     if not task:
         return {"success": False, "error": "task is required"}
 
+    # Validate CSS selectors
+    selector_pairs = [
+        ("extract_selector", extract_selector),
+        ("wait_for_selector", wait_for_selector),
+    ]
+    for sel_name, sel_val in selector_pairs:
+        if sel_val and not _SELECTOR_SAFE_RE.match(sel_val):
+            return {
+                "success": False,
+                "error": f"invalid {sel_name}: disallowed characters",
+            }
+
     # Validate URL format
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
@@ -109,7 +126,16 @@ async def _browser_task(
     logger,
 ) -> dict:
     """Execute browser automation task using Playwright."""
-    from playwright.async_api import async_playwright
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return {
+            "success": False,
+            "error": (
+                "playwright is not installed. "
+                "Run: pip install playwright && playwright install chromium"
+            ),
+        }
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless)

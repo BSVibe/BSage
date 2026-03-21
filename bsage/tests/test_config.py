@@ -13,8 +13,13 @@ class TestSettings:
     def test_default_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Settings should have sensible defaults."""
         for key in (
-            "LLM_API_KEY", "LLM_API_BASE", "VAULT_PATH",
-            "GATEWAY_HOST", "GATEWAY_PORT", "LOG_LEVEL", "SAFE_MODE",
+            "LLM_API_KEY",
+            "LLM_API_BASE",
+            "VAULT_PATH",
+            "GATEWAY_HOST",
+            "GATEWAY_PORT",
+            "LOG_LEVEL",
+            "SAFE_MODE",
         ):
             monkeypatch.delenv(key, raising=False)
         monkeypatch.setenv("LLM_MODEL", "anthropic/claude-sonnet-4-20250514")

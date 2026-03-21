@@ -34,7 +34,7 @@ test.describe("Vault", () => {
     let isRaw = await vaultPage.isRawMode();
     expect(isRaw).toBeFalsy();
 
-    // Switch to raw
+    // Switch to raw — switchToRaw now waits for content update
     await vaultPage.switchToRaw();
     isRaw = await vaultPage.isRawMode();
     expect(isRaw).toBeTruthy();
@@ -46,7 +46,8 @@ test.describe("Vault", () => {
   });
 
   test("空の vault ガイダンス メッセージ", async ({ page }) => {
-    // Mock empty vault response (VaultTreeEntry[] format)
+    // Mock empty vault response — unroute first to avoid handler collision
+    await page.unroute("**/api/vault/tree");
     await page.route("**/api/vault/tree", (route) => {
       route.fulfill({
         status: 200,

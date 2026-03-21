@@ -121,7 +121,11 @@ export const test = base.extend<CustomFixtures>({
           });
         } else if (route.request().method() === "PATCH") {
           const postData = route.request().postData();
-          if (postData) {
+          if (!postData) {
+            route.fulfill({ status: 400, body: "Missing request body" });
+            return;
+          }
+          try {
             const body = JSON.parse(postData);
             const updatedConfig = { ...MOCK_CONFIG_RESPONSE, ...body };
             route.fulfill({
@@ -129,6 +133,8 @@ export const test = base.extend<CustomFixtures>({
               contentType: "application/json",
               body: JSON.stringify(updatedConfig),
             });
+          } catch {
+            route.fulfill({ status: 400, body: "Invalid JSON" });
           }
         }
       });

@@ -147,7 +147,7 @@ async def setup(cred_store):
     import httpx
 
     click.echo("Discord Bot Setup")
-    bot_token = click.prompt("  Bot Token (from Developer Portal)")
+    bot_token = click.prompt("  Bot Token (from Developer Portal)", hide_input=True)
 
     headers = {
         "Authorization": f"Bot {bot_token}",

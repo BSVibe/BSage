@@ -25,14 +25,18 @@ test.describe("Chat", () => {
 
   test("Enter キー送信", async ({}) => {
     await chatPage.input.fill("Test message");
-    await chatPage.input.press("Enter");
 
-    await chatPage.waitForResponse();
-    await expect(chatPage.input).toHaveValue("");
+    await Promise.all([
+      chatPage.waitForResponse(),
+      chatPage.input.press("Enter"),
+    ]);
+
+    await expect(chatPage.input).toHaveValue("", { timeout: 5000 });
   });
 
   test("送信中 loading state", async ({ page }) => {
     // Mock delayed response to reliably observe disabled state
+    await page.unroute("**/api/chat");
     await page.route("**/api/chat", (route) => {
       setTimeout(() => {
         route.fulfill({
@@ -56,7 +60,8 @@ test.describe("Chat", () => {
   });
 
   test("API エラー時の復旧 (500 response)", async ({ page }) => {
-    // Mock error response
+    // Mock error response — unroute first to avoid handler collision
+    await page.unroute("**/api/chat");
     await page.route("**/api/chat", (route) => {
       route.fulfill({
         status: 500,

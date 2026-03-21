@@ -27,7 +27,9 @@ export class ChatPage {
   }
 
   async getLastAssistantMessage() {
-    const msg = this.page.locator("div.prose").last();
+    const msg = this.page
+      .locator("[data-testid='assistant-message'], div.prose")
+      .last();
     await msg.waitFor({ timeout: 10000 });
     return await msg.textContent();
   }

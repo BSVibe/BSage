@@ -22,11 +22,11 @@ export class SettingsPage {
   }
 
   get llmModelInput(): Locator {
-    return this.getLLMModelSection().locator('input[type="text"]');
+    return this.getLLMModelSection().getByRole("textbox");
   }
 
   get saveButton(): Locator {
-    return this.getLLMModelSection().locator("button", { hasText: "Save" });
+    return this.getLLMModelSection().getByRole("button", { name: "Save" });
   }
 
   async getLLMModel(): Promise<string> {
@@ -57,6 +57,6 @@ export class SettingsPage {
 
   /** Check if API key is configured (green dot visible) */
   async hasApiKeyConfigured(): Promise<boolean> {
-    return await this.page.locator("text=API key configured").isVisible();
+    return await this.page.getByText("API key configured").isVisible();
   }
 }

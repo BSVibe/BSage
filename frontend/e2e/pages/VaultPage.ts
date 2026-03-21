@@ -15,15 +15,16 @@ export class VaultPage {
   constructor(page: Page) {
     this.page = page;
     this.heading = page.getByRole("heading", { name: "Vault" });
-    // Left panel = sidebar with directory tree
+    // Use data-testid for stable selectors; fall back to role-based
     this.fileTree = page.locator(
-      ".w-56.shrink-0.border-r"
+      "[data-testid='vault-file-tree'], nav[aria-label='File tree'], .w-56.shrink-0.border-r"
     );
-    // Right panel content area
-    this.fileContent = page.locator(".flex-1.overflow-y-auto.px-6");
+    this.fileContent = page.locator(
+      "[data-testid='vault-file-content'], [role='main'], .flex-1.overflow-y-auto.px-6"
+    );
     // Toggle button text changes between Raw/Rendered
-    this.rawToggle = page.locator("button:has-text('Raw')");
-    this.renderedToggle = page.locator("button:has-text('Rendered')");
+    this.rawToggle = page.getByRole("button", { name: "Raw" });
+    this.renderedToggle = page.getByRole("button", { name: "Rendered" });
   }
 
   async goto() {
@@ -32,7 +33,7 @@ export class VaultPage {
   }
 
   async getFileEntry(name: string): Promise<Locator> {
-    return this.fileTree.locator(`text=${name}`).first();
+    return this.fileTree.getByText(name, { exact: true }).first();
   }
 
   async isFileEntryVisible(name: string): Promise<boolean> {
@@ -51,10 +52,14 @@ export class VaultPage {
 
   async switchToRaw() {
     await this.rawToggle.click();
+    // Wait for content area to update after toggle
+    await this.fileContent.waitFor({ state: "visible" });
   }
 
   async switchToRendered() {
     await this.renderedToggle.click();
+    // Wait for content area to update after toggle
+    await this.fileContent.waitFor({ state: "visible" });
   }
 
   async isRawMode(): Promise<boolean> {
@@ -65,6 +70,6 @@ export class VaultPage {
 
   async isEmptyState(): Promise<boolean> {
     // VaultView shows "Vault is empty" text
-    return await this.page.locator("text=Vault is empty").isVisible();
+    return await this.page.getByText("Vault is empty").isVisible();
   }
 }

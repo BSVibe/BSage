@@ -136,7 +136,7 @@ async def setup(cred_store):
     import httpx
 
     click.echo("Slack Bot Setup")
-    bot_token = click.prompt("  Bot User OAuth Token (xoxb-...)")
+    bot_token = click.prompt("  Bot User OAuth Token (xoxb-...)", hide_input=True)
 
     # Validate token and list channels
     headers = {

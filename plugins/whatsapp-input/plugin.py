@@ -84,7 +84,11 @@ async def execute(context) -> dict:
     # Strip "sha256=" prefix from Meta's webhook signature format
     if signature.startswith("sha256="):
         signature = signature[7:]
-    payload_str = json.dumps(webhook_data.get("body", {}))
+    try:
+        payload_str = json.dumps(webhook_data.get("body", {}))
+    except (TypeError, ValueError) as e:
+        context.logger.warning("whatsapp_payload_invalid", error=str(e))
+        return {"success": False, "error": "Invalid webhook payload"}
 
     if signature and not _verify_webhook_signature(payload_str, signature, verify_token):
         context.logger.warning("whatsapp_signature_invalid")
@@ -122,7 +126,7 @@ def setup(cred_store):
     click.echo("Get these from https://developers.facebook.com/")
     click.echo("")
 
-    access_token = click.prompt("  Access Token")
+    access_token = click.prompt("  Access Token", hide_input=True)
     phone_number_id = click.prompt("  Phone Number ID")
     verify_token = click.prompt("  Webhook Verify Token (for signature verification)")
 
