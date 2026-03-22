@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useApproval } from "./hooks/useApproval";
+import { useAuth } from "./hooks/useAuth";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { ApprovalModal } from "./components/approval/ApprovalModal";
+import { LoginView } from "./components/auth/LoginView";
 import { ChatView } from "./components/chat/ChatView";
 import { DashboardView } from "./components/dashboard/DashboardView";
 import { EventPanel } from "./components/events/EventPanel";
@@ -35,8 +37,21 @@ function RouteContent({ hash }: { hash: string }) {
 
 export default function App() {
   const hash = useHashRoute();
+  const { session, loading } = useAuth();
   const { connectionState, events, clearEvents } = useWebSocket();
   const { current: approvalRequest, respond: respondApproval, pendingCount } = useApproval();
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-100 dark:bg-gray-950">
+        <div className="text-gray-500 dark:text-gray-400">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <LoginView />;
+  }
 
   return (
     <Layout
