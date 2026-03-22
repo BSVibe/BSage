@@ -322,6 +322,7 @@ class SchedulerAdapter:
     def __init__(self, scheduler: Scheduler, persist_path: Path) -> None:
         self._scheduler = scheduler
         self._persist_path = persist_path
+        self._persist_lock = asyncio.Lock()
 
     async def add_cron(
         self,
@@ -401,27 +402,29 @@ class SchedulerAdapter:
 
     async def _persist(self, name: str, schedule: str, target: str) -> None:
         """Add or update a dynamic job in the persistence file."""
-        entries = await self._load_entries()
-        # Replace existing entry for this name
-        entries = [e for e in entries if e.get("name") != name]
-        entries.append({"name": name, "schedule": schedule, "target": target})
+        async with self._persist_lock:
+            entries = await self._load_entries()
+            # Replace existing entry for this name
+            entries = [e for e in entries if e.get("name") != name]
+            entries.append({"name": name, "schedule": schedule, "target": target})
 
-        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
 
-        def _write() -> None:
-            self._persist_path.write_text(json.dumps(entries, indent=2))
+            def _write() -> None:
+                self._persist_path.write_text(json.dumps(entries, indent=2))
 
-        await asyncio.to_thread(_write)
+            await asyncio.to_thread(_write)
 
     async def _remove_persisted(self, name: str) -> None:
         """Remove a dynamic job from the persistence file."""
-        entries = await self._load_entries()
-        entries = [e for e in entries if e.get("name") != name]
+        async with self._persist_lock:
+            entries = await self._load_entries()
+            entries = [e for e in entries if e.get("name") != name]
 
-        def _write() -> None:
-            self._persist_path.write_text(json.dumps(entries, indent=2))
+            def _write() -> None:
+                self._persist_path.write_text(json.dumps(entries, indent=2))
 
-        await asyncio.to_thread(_write)
+            await asyncio.to_thread(_write)
 
     async def _load_entries(self) -> list[dict[str, Any]]:
         """Load persisted dynamic jobs from JSON."""

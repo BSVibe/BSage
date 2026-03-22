@@ -32,11 +32,14 @@ export interface RuntimeConfig {
   llm_model: string;
   llm_api_base: string | null;
   safe_mode: boolean;
-  embedding_model: string;
-  embedding_api_base: string | null;
   disabled_entries: string[];
   has_llm_api_key: boolean;
-  has_embedding_api_key: boolean;
+  index_available: boolean;
+  /** Present only when embedding is configured. */
+  embedding_model?: string;
+  embedding_api_base?: string | null;
+  has_embedding_api_key?: boolean;
+  vault_path?: string;
 }
 
 /** PATCH /api/config request body. */
@@ -117,6 +120,7 @@ export interface VaultBacklink {
 export interface VaultGraph {
   nodes: VaultGraphNode[];
   links: VaultGraphLink[];
+  truncated: boolean;
 }
 
 export interface VaultGraphNode {
@@ -133,4 +137,5 @@ export interface VaultGraphLink {
 /** GET /api/vault/tags response. */
 export interface VaultTags {
   tags: Record<string, string[]>;
+  truncated: boolean;
 }

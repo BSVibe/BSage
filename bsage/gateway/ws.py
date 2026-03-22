@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -19,14 +21,18 @@ class ConnectionManager:
 
     def __init__(self) -> None:
         self._connections: list[WebSocket] = []
+        self._lock = asyncio.Lock()
 
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
-        self._connections.append(websocket)
+        async with self._lock:
+            self._connections.append(websocket)
         logger.info("ws_connected", count=len(self._connections))
 
-    def disconnect(self, websocket: WebSocket) -> None:
-        self._connections.remove(websocket)
+    async def disconnect(self, websocket: WebSocket) -> None:
+        async with self._lock:
+            with contextlib.suppress(ValueError):
+                self._connections.remove(websocket)
         logger.info("ws_disconnected", count=len(self._connections))
 
     def has_connections(self) -> bool:
@@ -34,13 +40,28 @@ class ConnectionManager:
         return len(self._connections) > 0
 
     async def broadcast(self, message: dict[str, Any]) -> None:
-        """Send a message to all connected clients."""
+        """Send a message to all connected clients.
+
+        Copies the connection list under the lock, then sends outside the lock
+        so that slow clients don't block connect/disconnect/other broadcasts.
+        """
         data = json.dumps(message)
-        for conn in self._connections:
+        async with self._lock:
+            snapshot = self._connections[:]
+
+        dead: list[WebSocket] = []
+        for conn in snapshot:
             try:
                 await conn.send_text(data)
             except Exception:
                 logger.warning("ws_send_failed")
+                dead.append(conn)
+
+        if dead:
+            async with self._lock:
+                for conn in dead:
+                    with contextlib.suppress(ValueError):
+                        self._connections.remove(conn)
 
 
 manager = ConnectionManager()
@@ -63,15 +84,31 @@ def create_ws_routes(
         try:
             while True:
                 data = await websocket.receive_text()
-                message = json.loads(data)
+                try:
+                    message = json.loads(data)
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning("ws_invalid_json", data=data[:200])
+                    err = json.dumps({"type": "error", "detail": "invalid JSON"})
+                    await websocket.send_text(err)
+                    continue
                 msg_type = message.get("type")
                 logger.info("ws_message_received", type=msg_type)
 
-                if msg_type == "approval_response" and approval_interface is not None:
-                    approval_interface.handle_response(message)
+                if msg_type == "approval_response":
+                    if approval_interface is not None:
+                        approval_interface.handle_response(message)
+                    else:
+                        await websocket.send_text(
+                            json.dumps(
+                                {"type": "error", "detail": "no approval interface configured"}
+                            )
+                        )
+                        continue
 
                 await websocket.send_text(json.dumps({"type": "ack", "received": msg_type}))
         except WebSocketDisconnect:
-            manager.disconnect(websocket)
+            pass
+        finally:
+            await manager.disconnect(websocket)
 
     return ws_router

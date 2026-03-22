@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import structlog
 
@@ -357,11 +358,13 @@ class AppState:
         """Stop scheduler and clean up resources."""
         if self.scheduler:
             self.scheduler.stop()
-        # Cancel background tasks if still running
+        # Cancel background tasks and await them to allow cleanup to run
         for attr in ("_reindex_task", "_graph_rebuild_task"):
             task = getattr(self, attr, None)
             if task and not task.done():
                 task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
         # Close databases
         await self.graph_store.close()
         if self.embedder.enabled:

@@ -92,6 +92,16 @@ def _normalize(name: str) -> str:
     return name.lower().strip()
 
 
+# Columns shared by both halves of the UNION ALL in query_neighbors.
+_NEIGHBOR_COLS = (
+    "r.id, r.source_id, r.target_id, r.rel_type,"
+    " r.source_path, r.properties, r.confidence,"
+    " r.weight, r.edge_type,"
+    " e.id, e.name, e.name_normalized, e.entity_type,"
+    " e.source_path, e.properties, e.confidence, e.knowledge_layer"
+)
+
+
 class GraphStore:
     """Async SQLite-backed graph storage.
 
@@ -149,6 +159,7 @@ class GraphStore:
             return await self._upsert_entity_locked(entity)
 
     async def _upsert_entity_locked(self, entity: GraphEntity) -> str:
+        # Caller must hold _write_lock
         norm = _normalize(entity.name)
         row = await self._fetchone(
             "SELECT id FROM entities WHERE name_normalized = ? AND entity_type = ?",
@@ -208,6 +219,7 @@ class GraphStore:
             return await self._upsert_relationship_locked(rel)
 
     async def _upsert_relationship_locked(self, rel: GraphRelationship) -> str:
+        # Caller must hold _write_lock
         row = await self._fetchone(
             """SELECT id FROM relationships
                WHERE source_id = ? AND target_id = ? AND rel_type = ?""",
@@ -251,6 +263,7 @@ class GraphStore:
             return await self._delete_by_source_locked(source_path)
 
     async def _delete_by_source_locked(self, source_path: str) -> int:
+        # Caller must hold _write_lock
         # 1. Delete relationships from this source
         await self._conn.execute("DELETE FROM relationships WHERE source_path = ?", (source_path,))
 
@@ -282,18 +295,20 @@ class GraphStore:
 
         Skips duplicate (entity_id, source_path) combinations.
         """
-        await self._conn.execute(
-            """INSERT OR IGNORE INTO provenance (entity_id, source_path, extraction_method,
-                                                confidence, extracted_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (
-                record.entity_id,
-                record.source_path,
-                record.extraction_method,
-                record.confidence,
-                record.extracted_at,
-            ),
-        )
+        async with self._write_lock:
+            await self._conn.execute(
+                """INSERT OR IGNORE INTO provenance (entity_id, source_path, extraction_method,
+                                                    confidence, extracted_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    record.entity_id,
+                    record.source_path,
+                    record.extraction_method,
+                    record.confidence,
+                    record.extracted_at,
+                ),
+            )
+            await self._conn.commit()
 
     # ------------------------------------------------------------------
     # Queries
@@ -333,7 +348,7 @@ class GraphStore:
         Returns (relationship, neighbor_entity) pairs for both outgoing
         and incoming edges.
         """
-        type_filter = "AND r.rel_type = ?" if rel_type else ""
+        type_clause = " AND r.rel_type = ?" if rel_type else ""
         params: list[Any] = [entity_id]
         if rel_type:
             params.append(rel_type)
@@ -341,35 +356,34 @@ class GraphStore:
         if rel_type:
             params.append(rel_type)
 
-        sql = f"""
-            SELECT r.id, r.source_id, r.target_id, r.rel_type,
-                   r.source_path, r.properties, r.confidence,
-                   r.weight, r.edge_type,
-                   e.id, e.name, e.name_normalized, e.entity_type,
-                   e.source_path, e.properties, e.confidence, e.knowledge_layer
-            FROM relationships r
-            JOIN entities e ON e.id = r.target_id
-            WHERE r.source_id = ? {type_filter}
-            UNION ALL
-            SELECT r.id, r.source_id, r.target_id, r.rel_type,
-                   r.source_path, r.properties, r.confidence,
-                   r.weight, r.edge_type,
-                   e.id, e.name, e.name_normalized, e.entity_type,
-                   e.source_path, e.properties, e.confidence, e.knowledge_layer
-            FROM relationships r
-            JOIN entities e ON e.id = r.source_id
-            WHERE r.target_id = ? {type_filter}
-        """
+        sql = (
+            "SELECT " + _NEIGHBOR_COLS + " FROM relationships r"
+            " JOIN entities e ON e.id = r.target_id"
+            " WHERE r.source_id = ?" + type_clause + " UNION ALL"
+            " SELECT " + _NEIGHBOR_COLS + " FROM relationships r"
+            " JOIN entities e ON e.id = r.source_id"
+            " WHERE r.target_id = ?" + type_clause
+        )
         rows = await self._fetchall(sql, tuple(params))
         results: list[tuple[GraphRelationship, GraphEntity]] = []
         for row in rows:
+            try:
+                rel_props = json.loads(row[5])
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("corrupted_relationship_json", row_id=row[0])
+                rel_props = {}
+            try:
+                ent_props = json.loads(row[14])
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("corrupted_entity_json", row_id=row[9])
+                ent_props = {}
             rel = GraphRelationship(
                 source_id=row[1],
                 target_id=row[2],
                 rel_type=row[3],
                 source_path=row[4],
                 id=row[0],
-                properties=json.loads(row[5]),
+                properties=rel_props,
                 confidence=row[6],
                 weight=row[7],
                 edge_type=row[8],
@@ -379,7 +393,7 @@ class GraphStore:
                 entity_type=row[12],
                 source_path=row[13],
                 id=row[9],
-                properties=json.loads(row[14]),
+                properties=ent_props,
                 confidence=row[15],
                 knowledge_layer=row[16],
             )
@@ -436,28 +450,22 @@ class GraphStore:
         return row[0] if row else 0
 
     async def count_relationships_for_entity(self, entity_name: str) -> int:
-        """Count all relationships (inbound + outbound) for an entity by source_path."""
+        """Count all relationships (inbound + outbound) for an entity.
+
+        Matches by source_path or normalized entity name in a single query.
+        """
         norm = _normalize(entity_name)
-        row = await self._fetchone(
-            """SELECT COUNT(*) FROM relationships r
-               JOIN entities e ON e.id = r.source_id OR e.id = r.target_id
-               WHERE e.source_path = ?""",
-            (entity_name,),
-        )
-        if row and row[0]:
-            return row[0]
-        # Fallback: try by normalized name
         row = await self._fetchone(
             """SELECT COUNT(*) FROM (
                    SELECT r.id FROM relationships r
                    JOIN entities e ON e.id = r.source_id
-                   WHERE e.name_normalized = ?
-                   UNION ALL
+                   WHERE e.source_path = ? OR e.name_normalized = ?
+                   UNION
                    SELECT r.id FROM relationships r
                    JOIN entities e ON e.id = r.target_id
-                   WHERE e.name_normalized = ?
+                   WHERE e.source_path = ? OR e.name_normalized = ?
                )""",
-            (norm, norm),
+            (entity_name, norm, entity_name, norm),
         )
         return row[0] if row else 0
 
@@ -531,6 +539,12 @@ class GraphStore:
 
     async def set_source_hash(self, source_path: str, content_hash: str) -> None:
         """Store or update the content hash for a source."""
+        async with self._write_lock:
+            await self._set_source_hash_locked(source_path, content_hash)
+            await self._conn.commit()
+
+    async def _set_source_hash_locked(self, source_path: str, content_hash: str) -> None:
+        """Store or update content hash. Caller must hold _write_lock."""
         await self._conn.execute(
             """INSERT OR REPLACE INTO source_hashes (source_path, content_hash, updated_at)
                VALUES (?, ?, datetime('now'))""",
@@ -539,7 +553,11 @@ class GraphStore:
 
     async def remove_source_hash(self, source_path: str) -> None:
         """Remove the stored content hash for a source."""
-        await self._conn.execute("DELETE FROM source_hashes WHERE source_path = ?", (source_path,))
+        async with self._write_lock:
+            await self._conn.execute(
+                "DELETE FROM source_hashes WHERE source_path = ?", (source_path,)
+            )
+            await self._conn.commit()
 
     # ------------------------------------------------------------------
     # Vault rebuild
@@ -559,6 +577,7 @@ class GraphStore:
     async def _rebuild_from_vault_locked(
         self, vault: Vault, extractor: GraphExtractor
     ) -> dict[str, int]:
+        # Caller must hold _rebuild_lock
         count = 0
         skipped = 0
         # v2.2: scan entity-type folders + seeds + legacy garden
@@ -595,24 +614,28 @@ class GraphStore:
                         continue
 
                     async with self._write_lock:
-                        await self._delete_by_source_locked(rel_path)
-                        entities, rels = extractor.extract_from_note(rel_path, content)
-                        id_map: dict[str, str] = {}
-                        for entity in entities:
-                            resolved_id = await self._upsert_entity_locked(entity)
-                            id_map[entity.id] = resolved_id
-                        for rel in rels:
-                            resolved = dataclasses.replace(
-                                rel,
-                                source_id=id_map.get(rel.source_id, rel.source_id),
-                                target_id=id_map.get(rel.target_id, rel.target_id),
-                            )
-                            await self._upsert_relationship_locked(resolved)
-                        await self.set_source_hash(rel_path, content_hash)
-                        await self._conn.commit()
+                        try:
+                            await self._delete_by_source_locked(rel_path)
+                            entities, rels = extractor.extract_from_note(rel_path, content)
+                            id_map: dict[str, str] = {}
+                            for entity in entities:
+                                resolved_id = await self._upsert_entity_locked(entity)
+                                id_map[entity.id] = resolved_id
+                            for rel in rels:
+                                resolved = dataclasses.replace(
+                                    rel,
+                                    source_id=id_map.get(rel.source_id, rel.source_id),
+                                    target_id=id_map.get(rel.target_id, rel.target_id),
+                                )
+                                await self._upsert_relationship_locked(resolved)
+                            await self._set_source_hash_locked(rel_path, content_hash)
+                            await self._conn.commit()
+                        except Exception:
+                            await self._conn.rollback()
+                            raise
                     count += 1
                 except (FileNotFoundError, OSError, UnicodeDecodeError):
-                    logger.debug("graph_rebuild_note_failed", path=rel_path, exc_info=True)
+                    logger.warning("graph_rebuild_note_failed", path=rel_path, exc_info=True)
 
         return {
             "notes_updated": count,
@@ -660,12 +683,17 @@ class GraphStore:
         Expected column order: id, name, name_normalized, entity_type,
         source_path, properties, confidence, knowledge_layer, created_at, updated_at.
         """
+        try:
+            props = json.loads(row[5])
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("corrupted_entity_json", entity_id=row[0])
+            props = {}
         return GraphEntity(
             name=row[1],
             entity_type=row[3],
             source_path=row[4],
             id=row[0],
-            properties=json.loads(row[5]),
+            properties=props,
             confidence=row[6],
             knowledge_layer=row[7],
         )

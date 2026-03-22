@@ -1,31 +1,41 @@
 """Telegram message input Plugin — polls getUpdates for new messages."""
 
 import json
+import os
+import tempfile
 from pathlib import Path
+from typing import Any
 
 from bsage.plugin import plugin
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}"
-STATE_SUBPATH = "seeds/telegram-input/_state.json"
 
 
 def _state_path(context) -> Path:
     """Resolve the offset state file path within the vault."""
-    return context.garden._vault.resolve_path(STATE_SUBPATH)
+    return context.garden.resolve_plugin_state_path("telegram-input")
 
 
 def _load_offset(path: Path) -> int | None:
     """Load last_update_id from the state file."""
-    if not path.exists():
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
     return data.get("last_update_id")
 
 
 def _save_offset(path: Path, update_id: int) -> None:
-    """Persist last_update_id to the state file."""
+    """Persist last_update_id to the state file atomically."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"last_update_id": update_id}), encoding="utf-8")
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"last_update_id": update_id}))
+        Path(tmp_path).replace(path)
+    except BaseException:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
 
 
 def _parse_update(update: dict) -> dict | None:
@@ -49,13 +59,13 @@ def _parse_update(update: dict) -> dict | None:
     version="1.1.0",
     category="input",
     description="Polls Telegram Bot API for new messages and stores them in the vault",
-    trigger={"type": "polling"},
+    trigger={"type": "cron", "schedule": "*/5 * * * *"},
     credentials=[
         {"name": "bot_token", "description": "Telegram Bot API token", "required": True},
         {"name": "chat_id", "description": "Target chat ID for notifications", "required": True},
     ],
 )
-async def execute(context) -> dict:
+async def execute(context: Any) -> dict:
     """Poll Telegram getUpdates and write new messages to seeds."""
     import httpx
 
@@ -74,8 +84,15 @@ async def execute(context) -> dict:
     url = f"{TELEGRAM_API.format(token=bot_token)}/getUpdates"
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, params=params, timeout=60.0)
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPStatusError as e:
+            context.logger.error("telegram_http_error", status=e.response.status_code)
+            return {"collected": 0, "error": f"HTTP {e.response.status_code}"}
+        except (ValueError, UnicodeDecodeError):
+            context.logger.error("telegram_json_parse_failed", status=resp.status_code)
+            return {"collected": 0, "error": "malformed JSON response"}
 
     if not data.get("ok"):
         return {"collected": 0, "error": data.get("description", "unknown")}
@@ -102,11 +119,14 @@ async def execute(context) -> dict:
         user_texts = [m["text"] for m in messages if m.get("text")]
         if user_texts and context.chat:
             combined = "\n".join(user_texts)
-            reply = await context.chat.chat(message=combined)
-            if reply and reply.strip():
-                context.logger.info("auto_reply_sent", length=len(reply))
-            else:
-                context.logger.warning("auto_reply_empty")
+            try:
+                reply = await context.chat.chat(message=combined)
+                if reply and reply.strip():
+                    context.logger.info("auto_reply_sent", length=len(reply))
+                else:
+                    context.logger.warning("auto_reply_empty")
+            except Exception:
+                context.logger.warning("auto_reply_failed", exc_info=True)
 
     if highest_update_id is not None:
         _save_offset(state_file, highest_update_id)
@@ -115,53 +135,58 @@ async def execute(context) -> dict:
 
 
 @execute.setup
-async def setup(cred_store):
+async def setup(cred_store: Any):
     """Configure Telegram bot credentials with token validation and chat_id auto-detection."""
     import click
     import httpx
 
     click.echo("Telegram Bot Setup")
-    bot_token = click.prompt("  Bot token (from @BotFather)")
+    bot_token = click.prompt("  Bot token (from @BotFather)", hide_input=True)
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=10.0)
-        if resp.status_code != 200:
-            click.echo(f"Error: Invalid bot token (HTTP {resp.status_code})", err=True)
-            raise SystemExit(1)
-        bot_name = resp.json().get("result", {}).get("username", "unknown")
-        click.echo(f"  Verified bot: @{bot_name}")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=10.0)
+            if resp.status_code != 200:
+                click.echo(f"Error: Invalid bot token (HTTP {resp.status_code})", err=True)
+                raise SystemExit(1)
+            bot_name = resp.json().get("result", {}).get("username", "unknown")
+            click.echo(f"  Verified bot: @{bot_name}")
 
-        # Try auto-detecting chat_id from recent messages
-        click.echo("  Checking for recent messages to auto-detect chat ID...")
-        click.echo("  (Send a message to the bot now if you haven't already)")
-        r = await client.get(
-            f"https://api.telegram.org/bot{bot_token}/getUpdates",
-            params={"limit": 10, "timeout": 10},
-            timeout=20.0,
-        )
-        detected_ids: list[tuple[int, str]] = []
-        if r.status_code == 200 and r.json().get("ok"):
-            for update in r.json().get("result", []):
-                msg = update.get("message", {})
-                chat = msg.get("chat", {})
-                cid = chat.get("id")
-                name = chat.get("first_name") or chat.get("title") or str(cid)
-                if cid and (cid, name) not in detected_ids:
-                    detected_ids.append((cid, name))
+            # Try auto-detecting chat_id from recent messages
+            click.echo("  Checking for recent messages to auto-detect chat ID...")
+            click.echo("  (Send a message to the bot now if you haven't already)")
+            r = await client.get(
+                f"https://api.telegram.org/bot{bot_token}/getUpdates",
+                params={"limit": 10, "timeout": 10},
+                timeout=20.0,
+            )
+            detected_ids: list[tuple[int, str]] = []
+            if r.status_code == 200 and r.json().get("ok"):
+                for update in r.json().get("result", []):
+                    msg = update.get("message", {})
+                    chat = msg.get("chat", {})
+                    cid = chat.get("id")
+                    name = chat.get("first_name") or chat.get("title") or str(cid)
+                    if cid and (cid, name) not in detected_ids:
+                        detected_ids.append((cid, name))
+    except httpx.HTTPError as e:
+        click.echo(f"Error: Network error during setup — {e}", err=True)
+        raise SystemExit(1) from e
 
-        if detected_ids:
-            click.echo("  Detected chats:")
-            for i, (cid, name) in enumerate(detected_ids, 1):
-                click.echo(f"    [{i}] {name} (ID: {cid})")
-            if len(detected_ids) == 1:
-                chat_id = str(detected_ids[0][0])
-                click.echo(f"  Auto-selected chat ID: {chat_id}")
-            else:
-                choice = click.prompt("  Select chat number", type=int, default=1)
-                chat_id = str(detected_ids[min(choice, len(detected_ids)) - 1][0])
+    if detected_ids:
+        click.echo("  Detected chats:")
+        for i, (cid, name) in enumerate(detected_ids, 1):
+            click.echo(f"    [{i}] {name} (ID: {cid})")
+        if len(detected_ids) == 1:
+            chat_id = str(detected_ids[0][0])
+            click.echo(f"  Auto-selected chat ID: {chat_id}")
         else:
-            click.echo("  No recent messages found. Please enter chat ID manually.")
-            chat_id = click.prompt("  Chat ID (numeric)")
+            choice = click.prompt("  Select chat number", type=int, default=1)
+            idx = max(0, min(choice - 1, len(detected_ids) - 1))
+            chat_id = str(detected_ids[idx][0])
+    else:
+        click.echo("  No recent messages found. Please enter chat ID manually.")
+        chat_id = click.prompt("  Chat ID (numeric)")
 
     if not chat_id.lstrip("-").isdigit():
         click.echo(f"Error: chat_id must be numeric, got '{chat_id}'", err=True)
@@ -172,7 +197,7 @@ async def setup(cred_store):
 
 
 @execute.notify
-async def notify(context) -> dict:
+async def notify(context: Any) -> dict:
     """Send a message back to the Telegram chat via Bot API."""
     import httpx
 
@@ -188,11 +213,24 @@ async def notify(context) -> dict:
 
     url = f"{TELEGRAM_API.format(token=bot_token)}/sendMessage"
     async with httpx.AsyncClient() as client:
-        response = await client.post(
-            url,
-            json={"chat_id": chat_id, "text": message},
-            timeout=10.0,
-        )
-        response.raise_for_status()
+        try:
+            response = await client.post(
+                url,
+                json={"chat_id": chat_id, "text": message},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            return {"sent": False, "reason": f"HTTP {e.response.status_code}"}
+        except (httpx.TimeoutException, httpx.NetworkError) as e:
+            context.logger.warning("notify_network_error", error=str(e))
+            return {"sent": False, "reason": "Network error"}
+        try:
+            body = response.json()
+        except (ValueError, UnicodeDecodeError):
+            return {"sent": False, "reason": "malformed JSON response"}
+        if not body.get("ok"):
+            desc = body.get("description", "unknown error")
+            return {"sent": False, "reason": f"Telegram API error: {desc}"}
 
     return {"sent": True, "chat_id": chat_id}

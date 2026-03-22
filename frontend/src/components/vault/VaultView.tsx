@@ -2,6 +2,7 @@ import { Code, Eye, FolderOpen, GitBranch, FileText } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkObsidian from "@thecae/remark-obsidian";
 import remarkWikiLink from "../../lib/remarkWikiLink";
@@ -48,6 +49,8 @@ function buildStemLookup(tree: VaultTreeEntry[]): Map<string, string> {
       const fullPath = entry.path ? `${entry.path}/${file}` : file;
       if (!map.has(stem)) {
         map.set(stem, fullPath);
+      } else if (import.meta.env.DEV) {
+        console.warn(`VaultView: stem collision for "${stem}" — "${fullPath}" ignored, using "${map.get(stem)}"`);
       }
     }
   }
@@ -193,8 +196,15 @@ export function VaultView() {
             </a>
           );
         }
+        const isSafeUrl = href && /^https?:\/\//i.test(href);
         return (
-          <a href={href} {...props} target="_blank" rel="noopener noreferrer">
+          <a
+            href={isSafeUrl ? href : "#"}
+            {...props}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={isSafeUrl ? undefined : (e) => e.preventDefault()}
+          >
             {children}
           </a>
         );
@@ -237,13 +247,13 @@ export function VaultView() {
         /* Notes mode */
         <div className="flex-1 min-h-0 flex">
           {/* Left panel: title + search + tags + directory tree */}
-          <div className="w-56 shrink-0 border-r border-gray-200 dark:border-gray-700 overflow-y-auto p-3 scrollbar-thin">
+          <div data-testid="vault-file-tree" className="w-56 shrink-0 border-r border-gray-200 dark:border-gray-700 overflow-y-auto p-3 scrollbar-thin">
             <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">Vault</h2>
             <SearchPanel onSelectFile={handleSelectFile} />
 
             <TagCloud activeTag={activeTag} onSelectTag={handleTagSelect} />
 
-            {tree.length === 0 ? (
+            {tree.length === 0 || (tree.length === 1 && tree[0].dirs.length === 0 && tree[0].files.length === 0) ? (
               <div className="text-center py-8 text-gray-400">
                 <FolderOpen className="w-6 h-6 mx-auto mb-2 opacity-50" />
                 <p className="text-xs">Vault is empty</p>
@@ -259,7 +269,7 @@ export function VaultView() {
           </div>
 
           {/* Right panel: tabs + file viewer */}
-          <div className="flex-1 flex flex-col min-w-0">
+          <div data-testid="vault-file-content" className="flex-1 flex flex-col min-w-0">
             <div className="px-6 pt-3 pb-2 shrink-0 flex items-center justify-end">
               <ViewModeTabs
                 current={viewMode}
@@ -304,7 +314,7 @@ export function VaultView() {
                 </div>
 
                 {rawMode ? (
-                  <pre className="text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
+                  <pre data-testid="vault-raw-content" className="text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
                     {fileContent}
                   </pre>
                 ) : (
@@ -340,7 +350,7 @@ export function VaultView() {
                     <div className="prose prose-sm dark:prose-invert max-w-none">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm, remarkObsidian, remarkWikiLink]}
-                        rehypePlugins={[rehypeRaw]}
+                        rehypePlugins={[rehypeRaw, [rehypeSanitize, { ...defaultSchema, attributes: { ...defaultSchema.attributes, "*": [...(defaultSchema.attributes?.["*"] || []), "className"] } }]]}
                         components={markdownComponents}
                       >
                         {parsed?.body ?? fileContent}

@@ -2,9 +2,13 @@
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from bsage.tests.conftest import make_httpx_mock, make_plugin_context
+
+_DEFAULT_CREDS = {"bot_token": "tok123", "chat_id": "456"}
 
 
 def _make_context(
@@ -12,22 +16,14 @@ def _make_context(
     credentials: dict | None = None,
     vault_root: Path | None = None,
 ) -> MagicMock:
-    ctx = MagicMock()
-    ctx.input_data = input_data
-    ctx.credentials = credentials or {"bot_token": "tok123", "chat_id": "456"}
-    ctx.garden = AsyncMock()
-    ctx.garden.write_seed = AsyncMock()
-    ctx.llm = AsyncMock()
-    ctx.llm.chat = AsyncMock(return_value="LLM reply")
-    ctx.chat = AsyncMock()
+    ctx = make_plugin_context(
+        input_data=input_data,
+        credentials=credentials or _DEFAULT_CREDS,
+        vault_root=vault_root,
+        include_chat=True,
+        include_state_path=True,
+    )
     ctx.chat.chat = AsyncMock(return_value="ChatBridge reply")
-    # Set up vault for state file access
-    mock_vault = MagicMock()
-    if vault_root:
-        mock_vault.resolve_path.side_effect = lambda subpath: vault_root / subpath
-    else:
-        mock_vault.resolve_path.return_value = Path("/tmp/test_state.json")
-    ctx.garden._vault = mock_vault
     return ctx
 
 
@@ -59,9 +55,19 @@ def _telegram_update(update_id: int, text: str, chat_id: int = 123) -> dict:
     }
 
 
+def _mock_response(json_data):
+    """Build a mock HTTP response."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = json_data
+    return resp
+
+
 # ── execute() tests ───────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 async def test_execute_polls_and_writes_seeds(tmp_path) -> None:
     execute_fn, _, mod = _load_plugin()
     ctx = _make_context(vault_root=tmp_path)
@@ -74,17 +80,9 @@ async def test_execute_polls_and_writes_seeds(tmp_path) -> None:
         ],
     }
 
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = api_response
+    mock_resp = _mock_response(api_response)
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with make_httpx_mock(get_response=mock_resp):
         result = await execute_fn(ctx)
 
     assert result == {"collected": 2}
@@ -97,6 +95,7 @@ async def test_execute_polls_and_writes_seeds(tmp_path) -> None:
     assert messages[1]["text"] == "world"
 
 
+@pytest.mark.asyncio
 async def test_execute_saves_offset(tmp_path) -> None:
     execute_fn, _, mod = _load_plugin()
     ctx = _make_context(vault_root=tmp_path)
@@ -106,16 +105,9 @@ async def test_execute_saves_offset(tmp_path) -> None:
         "result": [_telegram_update(200, "test")],
     }
 
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = api_response
+    mock_resp = _mock_response(api_response)
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with make_httpx_mock(get_response=mock_resp):
         await execute_fn(ctx)
 
     state_file = tmp_path / "seeds" / "telegram-input" / "_state.json"
@@ -124,6 +116,7 @@ async def test_execute_saves_offset(tmp_path) -> None:
     assert state["last_update_id"] == 200
 
 
+@pytest.mark.asyncio
 async def test_execute_uses_existing_offset(tmp_path) -> None:
     execute_fn, _, mod = _load_plugin()
 
@@ -136,16 +129,9 @@ async def test_execute_uses_existing_offset(tmp_path) -> None:
 
     api_response = {"ok": True, "result": []}
 
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = api_response
+    mock_resp = _mock_response(api_response)
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with make_httpx_mock(get_response=mock_resp) as mock_client:
         result = await execute_fn(ctx)
 
     assert result == {"collected": 0}
@@ -154,28 +140,21 @@ async def test_execute_uses_existing_offset(tmp_path) -> None:
     assert call_args[1]["params"]["offset"] == 100  # last_update_id + 1
 
 
+@pytest.mark.asyncio
 async def test_execute_no_updates(tmp_path) -> None:
     execute_fn, _, _ = _load_plugin()
     ctx = _make_context(vault_root=tmp_path)
 
-    api_response = {"ok": True, "result": []}
+    mock_resp = _mock_response({"ok": True, "result": []})
 
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = api_response
-
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with make_httpx_mock(get_response=mock_resp):
         result = await execute_fn(ctx)
 
     assert result == {"collected": 0}
     ctx.garden.write_seed.assert_not_awaited()
 
 
+@pytest.mark.asyncio
 async def test_execute_missing_bot_token(tmp_path) -> None:
     execute_fn, _, _ = _load_plugin()
     ctx = _make_context(credentials={"bot_token": "", "chat_id": "456"}, vault_root=tmp_path)
@@ -183,6 +162,7 @@ async def test_execute_missing_bot_token(tmp_path) -> None:
     assert result == {"collected": 0, "error": "missing bot_token"}
 
 
+@pytest.mark.asyncio
 async def test_execute_skips_non_message_updates(tmp_path) -> None:
     execute_fn, _, _ = _load_plugin()
     ctx = _make_context(vault_root=tmp_path)
@@ -195,16 +175,9 @@ async def test_execute_skips_non_message_updates(tmp_path) -> None:
         ],
     }
 
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = api_response
+    mock_resp = _mock_response(api_response)
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with make_httpx_mock(get_response=mock_resp):
         result = await execute_fn(ctx)
 
     assert result == {"collected": 1}
@@ -213,6 +186,7 @@ async def test_execute_skips_non_message_updates(tmp_path) -> None:
 # ── auto-reply tests (via context.chat / ChatBridge) ─────────────────
 
 
+@pytest.mark.asyncio
 async def test_execute_calls_chat_bridge(tmp_path) -> None:
     execute_fn, _, _ = _load_plugin()
     ctx = _make_context(vault_root=tmp_path)
@@ -222,16 +196,9 @@ async def test_execute_calls_chat_bridge(tmp_path) -> None:
         "result": [_telegram_update(500, "Hello bot")],
     }
 
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = api_response
+    mock_resp = _mock_response(api_response)
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with make_httpx_mock(get_response=mock_resp):
         result = await execute_fn(ctx)
 
     assert result == {"collected": 1}
@@ -239,6 +206,7 @@ async def test_execute_calls_chat_bridge(tmp_path) -> None:
     ctx.logger.info.assert_any_call("auto_reply_sent", length=len("ChatBridge reply"))
 
 
+@pytest.mark.asyncio
 async def test_execute_no_reply_when_chat_is_none(tmp_path) -> None:
     execute_fn, _, _ = _load_plugin()
     ctx = _make_context(vault_root=tmp_path)
@@ -249,16 +217,9 @@ async def test_execute_no_reply_when_chat_is_none(tmp_path) -> None:
         "result": [_telegram_update(501, "Hello")],
     }
 
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = api_response
+    mock_resp = _mock_response(api_response)
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with make_httpx_mock(get_response=mock_resp):
         result = await execute_fn(ctx)
 
     assert result == {"collected": 1}
@@ -304,6 +265,7 @@ def test_parse_update_no_message() -> None:
 # ── notify() tests ────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 async def test_notify_sends_message() -> None:
     _, notify_fn, _ = _load_plugin()
     ctx = _make_context(
@@ -313,13 +275,9 @@ async def test_notify_sends_message() -> None:
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value={"ok": True, "result": {"message_id": 1}})
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    with make_httpx_mock(post_response=mock_response) as mock_client:
         result = await notify_fn(ctx)
 
     assert result["sent"] is True
@@ -329,6 +287,7 @@ async def test_notify_sends_message() -> None:
     assert call_args[1]["json"]["text"] == "Hello from BSage"
 
 
+@pytest.mark.asyncio
 async def test_notify_missing_message() -> None:
     _, notify_fn, _ = _load_plugin()
     ctx = _make_context(input_data={"other": "data"})
@@ -336,6 +295,7 @@ async def test_notify_missing_message() -> None:
     assert result == {"sent": False, "reason": "no message provided"}
 
 
+@pytest.mark.asyncio
 async def test_notify_empty_input_data() -> None:
     _, notify_fn, _ = _load_plugin()
     ctx = _make_context(input_data=None)
@@ -343,6 +303,7 @@ async def test_notify_empty_input_data() -> None:
     assert result == {"sent": False, "reason": "no message provided"}
 
 
+@pytest.mark.asyncio
 async def test_notify_missing_credentials() -> None:
     _, notify_fn, _ = _load_plugin()
     ctx = _make_context(
@@ -353,7 +314,9 @@ async def test_notify_missing_credentials() -> None:
     assert result == {"sent": False, "reason": "missing bot_token or chat_id"}
 
 
-async def test_notify_http_error_raises() -> None:
+@pytest.mark.asyncio
+async def test_notify_http_error_returns_failure() -> None:
+    """HTTP errors from Telegram API are caught and returned as failure dict."""
     _, notify_fn, _ = _load_plugin()
     ctx = _make_context(input_data={"message": "hi"})
 
@@ -368,11 +331,81 @@ async def test_notify_http_error_raises() -> None:
         )
     )
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    with make_httpx_mock(post_response=mock_response):
+        result = await notify_fn(ctx)
 
-        with pytest.raises(httpx.HTTPStatusError):
-            await notify_fn(ctx)
+    assert result["sent"] is False
+    assert "403" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_execute_returns_error_on_http_status_error(tmp_path) -> None:
+    """Test that execute returns an error dict on HTTP status errors from Telegram API."""
+    import httpx
+
+    execute_fn, _, _ = _load_plugin()
+    ctx = _make_context(vault_root=tmp_path)
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError(
+            "401 Unauthorized", request=MagicMock(), response=MagicMock(status_code=401)
+        )
+    )
+
+    with make_httpx_mock(get_response=mock_resp):
+        result = await execute_fn(ctx)
+
+    assert result["collected"] == 0
+    assert "401" in result.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_execute_malformed_json_response(tmp_path) -> None:
+    """Test that execute handles malformed JSON response gracefully."""
+    execute_fn, _, _ = _load_plugin()
+    ctx = _make_context(vault_root=tmp_path)
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json = MagicMock(side_effect=ValueError("Invalid JSON"))
+    mock_resp.status_code = 200
+
+    with make_httpx_mock(get_response=mock_resp):
+        result = await execute_fn(ctx)
+
+    assert result["collected"] == 0
+    assert result["error"] == "malformed JSON response"
+
+
+@pytest.mark.asyncio
+async def test_notify_api_error_in_body() -> None:
+    """Test that notify detects Telegram API error in response body."""
+    _, notify_fn, _ = _load_plugin()
+    ctx = _make_context(input_data={"message": "hi"})
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json = MagicMock(return_value={"ok": False, "description": "Unauthorized"})
+
+    with make_httpx_mock(post_response=mock_resp):
+        result = await notify_fn(ctx)
+
+    assert result["sent"] is False
+    assert "Unauthorized" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_notify_success_checks_ok_field() -> None:
+    """Test that notify verifies ok=True in Telegram response."""
+    _, notify_fn, _ = _load_plugin()
+    ctx = _make_context(input_data={"message": "hi"})
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json = MagicMock(return_value={"ok": True, "result": {"message_id": 123}})
+
+    with make_httpx_mock(post_response=mock_resp):
+        result = await notify_fn(ctx)
+
+    assert result["sent"] is True

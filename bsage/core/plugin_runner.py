@@ -88,17 +88,43 @@ class PluginRunner:
             raise PluginRunError(f"Plugin '{meta.name}' has no notification handler")
 
         logger.info("plugin_notify_start", name=meta.name)
+        correlation_id = str(uuid.uuid4())
+
+        await emit_event(
+            self._event_bus,
+            "PLUGIN_NOTIFY_START",
+            {"name": meta.name},
+            correlation_id=correlation_id,
+        )
 
         await self._auto_inject_credentials(meta, context)
 
         try:
             result = await meta._notify_fn(context)
         except PluginRunError:
+            await emit_event(
+                self._event_bus,
+                "PLUGIN_NOTIFY_ERROR",
+                {"name": meta.name, "error": "notification failed"},
+                correlation_id=correlation_id,
+            )
             raise
         except Exception as exc:
+            await emit_event(
+                self._event_bus,
+                "PLUGIN_NOTIFY_ERROR",
+                {"name": meta.name, "error": str(exc)},
+                correlation_id=correlation_id,
+            )
             raise PluginRunError(f"Plugin '{meta.name}' notification failed: {exc}") from exc
 
         logger.info("plugin_notify_complete", name=meta.name)
+        await emit_event(
+            self._event_bus,
+            "PLUGIN_NOTIFY_COMPLETE",
+            {"name": meta.name},
+            correlation_id=correlation_id,
+        )
         return result
 
     async def _auto_inject_credentials(self, meta: PluginMeta, context: SkillContext) -> None:

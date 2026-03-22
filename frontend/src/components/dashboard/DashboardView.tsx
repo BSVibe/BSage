@@ -1,5 +1,5 @@
 import { Plug, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { EntryMeta } from "../../api/types";
 import { Badge } from "../common/Badge";
@@ -11,6 +11,7 @@ export function DashboardView() {
   const [skills, setSkills] = useState<EntryMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [runningName, setRunningName] = useState<string | null>(null);
+  const togglingRef = useRef(false);
   const [setupTarget, setSetupTarget] = useState<string | null>(null);
 
   const refreshData = useCallback(async () => {
@@ -36,11 +37,15 @@ export function DashboardView() {
 
   const handleToggle = useCallback(
     async (name: string) => {
+      if (togglingRef.current) return;
+      togglingRef.current = true;
       try {
         await api.toggleEntry(name);
         await refreshData();
       } catch {
         // errors shown via event panel
+      } finally {
+        togglingRef.current = false;
       }
     },
     [refreshData],
@@ -126,6 +131,7 @@ function EntryCard({
 
   return (
     <div
+      data-testid="plugin-card"
       className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800/50"
     >
       <div className="flex items-start justify-between mb-2">
@@ -175,7 +181,7 @@ function EntryCard({
           <Toggle
             checked={entry.enabled}
             onChange={() => onToggle(entry.name)}
-            label=""
+            label={`Toggle ${entry.name}`}
           />
         )}
       </div>
