@@ -65,7 +65,12 @@ export class VaultPage {
 
   async isRawMode(): Promise<boolean> {
     const pre = this.fileContent.locator("[data-testid='vault-raw-content']");
-    return await pre.isVisible();
+    try {
+      await pre.waitFor({ timeout: 2000 });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async isEmptyState(): Promise<boolean> {

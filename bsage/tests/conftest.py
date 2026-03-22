@@ -89,8 +89,9 @@ def make_plugin_context(
 
     # Config — always provide defaults so tests don't need to pass them manually
     config = MagicMock()
-    config.vault_path = vault_root or Path(tempfile.gettempdir()) / "bsage-test-vault"
-    config.tmp_dir = Path(tempfile.gettempdir()) / "bsage-test-tmp"
+    base_path = vault_root or Path(tempfile.gettempdir()) / "bsage-test-vault"
+    config.vault_path = base_path
+    config.tmp_dir = base_path / "tmp"
     config.safe_mode = True
     if config_overrides:
         for k, v in config_overrides.items():

@@ -614,21 +614,25 @@ class GraphStore:
                         continue
 
                     async with self._write_lock:
-                        await self._delete_by_source_locked(rel_path)
-                        entities, rels = extractor.extract_from_note(rel_path, content)
-                        id_map: dict[str, str] = {}
-                        for entity in entities:
-                            resolved_id = await self._upsert_entity_locked(entity)
-                            id_map[entity.id] = resolved_id
-                        for rel in rels:
-                            resolved = dataclasses.replace(
-                                rel,
-                                source_id=id_map.get(rel.source_id, rel.source_id),
-                                target_id=id_map.get(rel.target_id, rel.target_id),
-                            )
-                            await self._upsert_relationship_locked(resolved)
-                        await self._set_source_hash_locked(rel_path, content_hash)
-                        await self._conn.commit()
+                        try:
+                            await self._delete_by_source_locked(rel_path)
+                            entities, rels = extractor.extract_from_note(rel_path, content)
+                            id_map: dict[str, str] = {}
+                            for entity in entities:
+                                resolved_id = await self._upsert_entity_locked(entity)
+                                id_map[entity.id] = resolved_id
+                            for rel in rels:
+                                resolved = dataclasses.replace(
+                                    rel,
+                                    source_id=id_map.get(rel.source_id, rel.source_id),
+                                    target_id=id_map.get(rel.target_id, rel.target_id),
+                                )
+                                await self._upsert_relationship_locked(resolved)
+                            await self._set_source_hash_locked(rel_path, content_hash)
+                            await self._conn.commit()
+                        except Exception:
+                            await self._conn.rollback()
+                            raise
                     count += 1
                 except (FileNotFoundError, OSError, UnicodeDecodeError):
                     logger.warning("graph_rebuild_note_failed", path=rel_path, exc_info=True)

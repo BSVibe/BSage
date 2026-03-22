@@ -21,7 +21,7 @@ export class DashboardPage {
   }
 
   async isPluginVisible(name: string): Promise<boolean> {
-    return await this.page.locator("h4", { hasText: name }).isVisible();
+    return await this.getPluginCard(name).isVisible();
   }
 
   async hasNeedsSetupBadge(name: string): Promise<boolean> {

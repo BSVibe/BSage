@@ -9,6 +9,18 @@ from typing import Any
 
 from bsage.plugin import plugin
 
+# Directories considered trusted for full-path command execution.
+# Binaries outside these prefixes (e.g. /tmp/, /home/) are rejected even if
+# the basename matches the whitelist, preventing impersonation attacks.
+_TRUSTED_PATH_PREFIXES = frozenset({
+    "/usr/",
+    "/bin/",
+    "/sbin/",
+    "/opt/",
+    "/snap/",
+    "/usr/local/",
+})
+
 
 def _parse_allowed_commands(commands_str: str) -> list[str]:
     """Parse comma-separated allowed commands into a list."""
@@ -36,8 +48,17 @@ def _validate_command(command: str, allowed_commands: list[str]) -> bool:
     # Reject any path component containing ".." (covers ../../, ./../, etc.)
     if ".." in Path(cmd_path).parts:
         return False
-    # Resolve to real path and use only the final binary name
-    resolved_name = Path(os.path.realpath(cmd_path)).name if "/" in cmd_path else cmd_path
+    if "/" in cmd_path:
+        # Full path given — resolve real path and use the basename for whitelist lookup
+        real = Path(os.path.realpath(cmd_path))
+        resolved_name = real.name
+        # Reject binaries outside trusted system directories to prevent impersonation
+        # (e.g. /tmp/rm must not pass just because "rm" is whitelisted)
+        real_str = str(real)
+        if not any(real_str.startswith(prefix) for prefix in _TRUSTED_PATH_PREFIXES):
+            return False
+    else:
+        resolved_name = cmd_path
     return any(allowed.lower() == resolved_name.lower() for allowed in allowed_commands)
 
 
@@ -164,19 +185,25 @@ async def execute(context: Any) -> dict:
         }
 
     # Determine working directory
+    vault_path = getattr(context.config, "vault_path", None)
+    tmp_dir = getattr(context.config, "tmp_dir", None)
     if working_dir:
+        if vault_path is None or tmp_dir is None:
+            return {"success": False, "error": "vault_path or tmp_dir not configured"}
         is_valid, resolved = _escape_working_dir(
             working_dir,
             sandbox_mode,
-            context.config.vault_path,
-            context.config.tmp_dir,
+            vault_path,
+            tmp_dir,
         )
         if not is_valid:
             return {"success": False, "error": resolved}
         cwd = resolved
     else:
         # Default to tmp_dir (safe)
-        cwd = str(context.config.tmp_dir)
+        if tmp_dir is None:
+            return {"success": False, "error": "tmp_dir not configured"}
+        cwd = str(tmp_dir)
 
     # Execute command
     try:

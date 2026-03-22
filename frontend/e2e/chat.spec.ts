@@ -9,7 +9,7 @@ test.describe("Chat", () => {
     await chatPage.goto();
   });
 
-  test("initial load — input visible, send button present", async ({ page }) => {
+  test("initial load — input visible, send button present", async () => {
     await expect(chatPage.heading).toBeVisible();
     await expect(chatPage.input).toBeVisible();
     await expect(chatPage.sendButton).toBeVisible();
@@ -72,8 +72,12 @@ test.describe("Chat", () => {
 
     await chatPage.sendMessage("Error test");
 
-    // Wait for input to be re-enabled after error handling completes
-    await chatPage.input.waitFor({ state: "visible" });
+    // Error is shown as an assistant message starting with "Error:"
+    const errorMsg = page.locator("[data-testid='assistant-message']").last();
+    await expect(errorMsg).toBeVisible({ timeout: 10000 });
+    await expect(errorMsg).toContainText("Error");
+
+    // Input is re-enabled after error handling
     await expect(chatPage.input).toBeEnabled({ timeout: 10000 });
   });
 });

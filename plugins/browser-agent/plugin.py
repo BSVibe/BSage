@@ -103,30 +103,28 @@ async def execute(context: Any) -> dict:
             headless,
             context.logger,
         )
-
-        # Write to action log
-        await context.garden.write_action(
-            "browser-agent",
-            f"Browsed: {url}\nTask: {task}",
-        )
-
-        # Write full result to seed
-        await context.garden.write_seed(
-            "browser-agent",
-            {
-                "url": url,
-                "task": task,
-                "success": result["success"],
-                "content": result.get("content", ""),
-                "page_title": result.get("page_title", ""),
-            },
-        )
-
-        return result
-
     except Exception as e:
         context.logger.exception("browser_task_error", url=url, error=str(e))
         return {"success": False, "error": f"Browser task failed: {e}"}
+
+    # Browser task succeeded — persist results outside the browser try/except
+    # so that vault I/O errors are not misreported as browser failures
+    await context.garden.write_action(
+        "browser-agent",
+        f"Browsed: {url}\nTask: {task}",
+    )
+    await context.garden.write_seed(
+        "browser-agent",
+        {
+            "url": url,
+            "task": task,
+            "success": result["success"],
+            "content": result.get("content", ""),
+            "page_title": result.get("page_title", ""),
+        },
+    )
+
+    return result
 
 
 async def _browser_task(

@@ -250,9 +250,7 @@ async def notify(context: Any) -> dict:
         try:
             data = resp.json()
         except (ValueError, UnicodeDecodeError):
-            context.logger.warning(
-                "notify_json_parse_failed", status=resp.status_code
-            )
+            context.logger.warning("notify_json_parse_failed", status=resp.status_code)
             return {
                 "sent": False,
                 "error": f"Invalid JSON response (HTTP {resp.status_code})",

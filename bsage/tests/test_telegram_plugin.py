@@ -339,8 +339,8 @@ async def test_notify_http_error_returns_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_raises_on_http_status_error(tmp_path) -> None:
-    """Test that execute propagates HTTP status errors from Telegram API."""
+async def test_execute_returns_error_on_http_status_error(tmp_path) -> None:
+    """Test that execute returns an error dict on HTTP status errors from Telegram API."""
     import httpx
 
     execute_fn, _, _ = _load_plugin()
@@ -353,8 +353,11 @@ async def test_execute_raises_on_http_status_error(tmp_path) -> None:
         )
     )
 
-    with make_httpx_mock(get_response=mock_resp), pytest.raises(httpx.HTTPStatusError):
-        await execute_fn(ctx)
+    with make_httpx_mock(get_response=mock_resp):
+        result = await execute_fn(ctx)
+
+    assert result["collected"] == 0
+    assert "401" in result.get("error", "")
 
 
 @pytest.mark.asyncio

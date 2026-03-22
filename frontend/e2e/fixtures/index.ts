@@ -1,4 +1,5 @@
 import { test as base } from "@playwright/test";
+import type { EntryMeta } from "../../src/api/types";
 
 /**
  * Mock API responses fixture (auto-used)
@@ -22,7 +23,7 @@ const MOCK_CONFIG_RESPONSE = {
   index_available: false,
 };
 
-const MOCK_PLUGINS_RESPONSE = [
+const MOCK_PLUGINS_RESPONSE: EntryMeta[] = [
   {
     name: "slack-input",
     version: "1.0.0",

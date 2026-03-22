@@ -84,9 +84,12 @@ async def execute(context: Any) -> dict:
     url = f"{TELEGRAM_API.format(token=bot_token)}/getUpdates"
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, params=params, timeout=60.0)
-        resp.raise_for_status()
         try:
+            resp.raise_for_status()
             data = resp.json()
+        except httpx.HTTPStatusError as e:
+            context.logger.error("telegram_http_error", status=e.response.status_code)
+            return {"collected": 0, "error": f"HTTP {e.response.status_code}"}
         except (ValueError, UnicodeDecodeError):
             context.logger.error("telegram_json_parse_failed", status=resp.status_code)
             return {"collected": 0, "error": "malformed JSON response"}

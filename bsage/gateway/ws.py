@@ -94,8 +94,16 @@ def create_ws_routes(
                 msg_type = message.get("type")
                 logger.info("ws_message_received", type=msg_type)
 
-                if msg_type == "approval_response" and approval_interface is not None:
-                    approval_interface.handle_response(message)
+                if msg_type == "approval_response":
+                    if approval_interface is not None:
+                        approval_interface.handle_response(message)
+                    else:
+                        await websocket.send_text(
+                            json.dumps(
+                                {"type": "error", "detail": "no approval interface configured"}
+                            )
+                        )
+                        continue
 
                 await websocket.send_text(json.dumps({"type": "ack", "received": msg_type}))
         except WebSocketDisconnect:
