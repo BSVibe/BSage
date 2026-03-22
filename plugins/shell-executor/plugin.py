@@ -12,14 +12,16 @@ from bsage.plugin import plugin
 # Directories considered trusted for full-path command execution.
 # Binaries outside these prefixes (e.g. /tmp/, /home/) are rejected even if
 # the basename matches the whitelist, preventing impersonation attacks.
-_TRUSTED_PATH_PREFIXES = frozenset({
-    "/usr/",
-    "/bin/",
-    "/sbin/",
-    "/opt/",
-    "/snap/",
-    "/usr/local/",
-})
+_TRUSTED_PATH_PREFIXES = frozenset(
+    {
+        "/usr/",
+        "/bin/",
+        "/sbin/",
+        "/opt/",
+        "/snap/",
+        "/usr/local/",
+    }
+)
 
 
 def _parse_allowed_commands(commands_str: str) -> list[str]:

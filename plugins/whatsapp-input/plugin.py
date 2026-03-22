@@ -2,9 +2,15 @@
 
 import hashlib
 import hmac
+from collections import OrderedDict
 from typing import Any
 
 from bsage.plugin import plugin
+
+# Module-level dedup cache — LRU bounded to last 200 message IDs.
+# Handles Meta webhook retries without requiring persistent state.
+_SEEN_MSG_IDS: OrderedDict = OrderedDict()
+_DEDUP_MAX = 200
 
 
 def _verify_webhook_signature(payload: str, signature: str, app_secret: str) -> bool:
@@ -133,6 +139,16 @@ async def execute(context: Any) -> dict:
 
     if not parsed:
         return {"collected": 0, "reason": "no text message"}
+
+    # Dedup by Meta message ID to handle webhook retries gracefully.
+    msg_id = parsed.get("id", "")
+    if msg_id:
+        if msg_id in _SEEN_MSG_IDS:
+            context.logger.info("whatsapp_duplicate_skipped", msg_id=msg_id)
+            return {"collected": 0, "reason": "duplicate message"}
+        _SEEN_MSG_IDS[msg_id] = True
+        if len(_SEEN_MSG_IDS) > _DEDUP_MAX:
+            _SEEN_MSG_IDS.popitem(last=False)
 
     # Write to seed — include sender phone so notify() can reply
     await context.garden.write_seed(
