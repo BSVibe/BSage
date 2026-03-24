@@ -12,16 +12,16 @@ import type {
   VaultTags,
   VaultTreeEntry,
 } from "./types";
-import { supabase } from "../lib/supabase";
+import { getAccessToken } from "../lib/supabase";
 
 const BASE = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
-  const { data } = await supabase.auth.getSession();
-  if (data.session?.access_token) {
-    headers["Authorization"] = `Bearer ${data.session.access_token}`;
+  const token = getAccessToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   const res = await fetch(`${BASE}${path}`, {

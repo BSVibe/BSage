@@ -1,55 +1,39 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Session, User } from "@supabase/supabase-js";
-import { supabase } from "../lib/supabase";
+import { clearTokens, consumeHashTokens, getAccessToken } from "../lib/supabase";
 
 const AUTH_LOGIN_URL = "https://auth.bsvibe.dev/login";
 
 interface AuthState {
-  session: Session | null;
-  user: User | null;
+  token: string | null;
   loading: boolean;
-  signOut: () => Promise<void>;
+  signOut: () => void;
 }
 
 export function useAuth(): AuthState {
-  const [session, setSession] = useState<Session | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
+    // 1. Check if we just came back from auth callback (tokens in hash)
+    consumeHashTokens();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      // Clean up hash fragment after Supabase picks up tokens
-      if (session && window.location.hash.includes("access_token")) {
-        window.history.replaceState(null, "", window.location.pathname);
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    // 2. Read token from storage
+    setToken(getAccessToken());
+    setLoading(false);
   }, []);
 
-  const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+  const signOut = useCallback(() => {
+    clearTokens();
+    setToken(null);
     redirectToLogin();
   }, []);
 
-  return {
-    session,
-    user: session?.user ?? null,
-    loading,
-    signOut,
-  };
+  return { token, loading, signOut };
 }
 
 /** Redirect browser to external auth login page. */
 export function redirectToLogin() {
   const callbackUrl = `${window.location.origin}/api/auth/callback`;
-  const state = crypto.randomUUID();
+  const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
   window.location.href = `${AUTH_LOGIN_URL}?redirect_uri=${encodeURIComponent(callbackUrl)}&state=${encodeURIComponent(state)}`;
 }

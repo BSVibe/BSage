@@ -10,10 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-from urllib.parse import urlencode
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from bsage.core.exceptions import VaultPathError
@@ -117,15 +115,28 @@ def create_routes(state: AppState) -> APIRouter:
         return {"status": "ok"}
 
     @public.get("/auth/callback")
-    async def auth_callback(request: Request) -> RedirectResponse:
+    async def auth_callback(request: Request) -> HTMLResponse:
         """Handle OAuth callback from external auth provider.
 
-        Forwards received tokens to the frontend via URL fragment
-        so the Supabase JS client can pick them up automatically.
+        Returns an HTML page that extracts tokens from both query params
+        and URL hash fragment (Supabase sends tokens in the hash),
+        stores them in localStorage, and redirects to the frontend root.
         """
         params = dict(request.query_params)
-        fragment = urlencode(params)
-        return RedirectResponse(url=f"/#{fragment}")
+        params_json = json.dumps(params)
+        html = f"""<!DOCTYPE html>
+<html><head><title>Authenticating...</title></head>
+<body><p>Authenticating...</p><script>
+(function() {{
+  var p = {params_json};
+  var h = window.location.hash.substring(1);
+  if (h) new URLSearchParams(h).forEach(function(v,k) {{ p[k] = v; }});
+  if (p.access_token) localStorage.setItem('bsage_access_token', p.access_token);
+  if (p.refresh_token) localStorage.setItem('bsage_refresh_token', p.refresh_token);
+  window.location.replace('/');
+}})();
+</script></body></html>"""
+        return HTMLResponse(content=html)
 
     @protected.get("/plugins")
     async def list_plugins() -> list[dict[str, Any]]:

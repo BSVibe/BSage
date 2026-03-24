@@ -860,11 +860,11 @@ class TestAuthEndpoints:
     def test_auth_callback_no_auth_required(self, auth_client) -> None:
         response = auth_client.get(
             "/api/auth/callback?access_token=tok&refresh_token=ref",
-            follow_redirects=False,
         )
-        assert response.status_code == 307
-        assert "access_token=tok" in response.headers["location"]
-        assert "refresh_token=ref" in response.headers["location"]
+        assert response.status_code == 200
+        assert "access_token" in response.text
+        assert "tok" in response.text
+        assert "bsage_access_token" in response.text
 
     def test_webhooks_no_auth_required(self, auth_client, auth_mock_state) -> None:
         auth_mock_state.agent_loop = MagicMock()

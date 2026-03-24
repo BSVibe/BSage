@@ -14,7 +14,6 @@
     "test:e2e:debug": "playwright test --debug"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.99.3",
     "@thecae/remark-obsidian": "^1.1.1",
     "lucide-react": "^0.575.0",
     "react": "^19.2.0",
