@@ -1,0 +1,64 @@
+# =============================================================================
+# BSage Production Docker Compose
+# =============================================================================
+# Single FastAPI gateway (SQLite, no external DB)
+#
+# Usage:
+#   docker-compose up -d
+# =============================================================================
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: bsage-app
+    restart: unless-stopped
+    ports:
+      - "8400:8000"
+    environment:
+      LLM_MODEL: ${LLM_MODEL:-anthropic/claude-haiku-4-5-20251001}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_API_BASE: ${EMBEDDING_API_BASE:-}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      VAULT_PATH: /app/vault
+      SKILLS_DIR: /app/skills
+      TMP_DIR: /app/tmp
+      CREDENTIALS_DIR: /app/.credentials
+      SAFE_MODE: ${SAFE_MODE:-true}
+      GATEWAY_HOST: "0.0.0.0"
+      GATEWAY_PORT: "8000"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    volumes:
+      - bsage-vault:/app/vault
+      - bsage-credentials:/app/.credentials
+      - ../logs:/app/logs
+    networks:
+      - bsage-network
+
+volumes:
+  bsage-vault:
+    name: bsage-vault
+  bsage-credentials:
+    name: bsage-credentials
+
+networks:
+  bsage-network:
+    driver: bridge
+    name: bsage-network
