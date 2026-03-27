@@ -114,8 +114,14 @@ def create_ws_routes(
         # Accept the socket but don't add to broadcast pool yet
         await websocket.accept()
 
+        # Always require authentication — reject if no auth provider configured
+        if auth_provider is None:
+            logger.warning("ws_rejected", reason="auth not configured")
+            await websocket.close(code=4003, reason="Authentication not configured")
+            return
+
         # Authenticate before joining the broadcast pool
-        if auth_provider is not None and not await _authenticate_ws(websocket, auth_provider):
+        if not await _authenticate_ws(websocket, auth_provider):
             return
 
         # Now safe to add to the broadcast pool

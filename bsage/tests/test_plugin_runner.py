@@ -180,6 +180,75 @@ class TestPluginRunnerEvents:
         assert result == {"ok": True}
 
 
+class TestInputSchemaValidation:
+    """Test input_schema validation in PluginRunner.run()."""
+
+    async def test_valid_input_passes_validation(self, mock_context) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        }
+        meta = _make_plugin_meta(input_schema=schema)
+        meta._execute_fn = AsyncMock(return_value={"ok": True})
+        mock_context.input_data = {"command": "ls -la"}
+
+        runner = PluginRunner()
+        result = await runner.run(meta, mock_context)
+        assert result == {"ok": True}
+
+    async def test_invalid_input_raises_error(self, mock_context) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        }
+        meta = _make_plugin_meta(input_schema=schema)
+        meta._execute_fn = AsyncMock(return_value={})
+        mock_context.input_data = {"timeout": 10}  # missing required 'command'
+
+        runner = PluginRunner()
+        with pytest.raises(PluginRunError, match="input_schema"):
+            await runner.run(meta, mock_context)
+
+    async def test_wrong_type_raises_error(self, mock_context) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+        }
+        meta = _make_plugin_meta(input_schema=schema)
+        meta._execute_fn = AsyncMock(return_value={})
+        mock_context.input_data = {"count": "not_a_number"}
+
+        runner = PluginRunner()
+        with pytest.raises(PluginRunError, match="input_schema"):
+            await runner.run(meta, mock_context)
+
+    async def test_no_schema_skips_validation(self, mock_context) -> None:
+        meta = _make_plugin_meta()  # input_schema=None
+        meta._execute_fn = AsyncMock(return_value={"ok": True})
+        mock_context.input_data = {"anything": "goes"}
+
+        runner = PluginRunner()
+        result = await runner.run(meta, mock_context)
+        assert result == {"ok": True}
+
+    async def test_none_input_data_with_schema_raises(self, mock_context) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        }
+        meta = _make_plugin_meta(input_schema=schema)
+        meta._execute_fn = AsyncMock(return_value={})
+        mock_context.input_data = None
+
+        runner = PluginRunner()
+        with pytest.raises(PluginRunError, match="input_schema"):
+            await runner.run(meta, mock_context)
+
+
 class TestCredentialValidation:
     """Test required credential validation in PluginRunner."""
 
