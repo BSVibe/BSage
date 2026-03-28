@@ -7,6 +7,7 @@ import contextlib
 import json
 import os
 import re
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -583,8 +584,22 @@ def create_routes(state: AppState) -> APIRouter:
         "preferences",
     ]
 
+    _knowledge_cache: list[tuple[str, str]] | None = None
+    _knowledge_cache_ts: float = 0.0
+    _knowledge_cache_ttl: float = 60.0  # seconds
+
     async def _scan_knowledge_notes() -> list[tuple[str, str]]:
-        """Scan vault knowledge directories and return (rel_path, content) pairs."""
+        """Scan vault knowledge directories and return (rel_path, content) pairs.
+
+        Results are cached in-memory for ``_knowledge_cache_ttl`` seconds to
+        avoid a full vault walk on every request.
+        """
+        nonlocal _knowledge_cache, _knowledge_cache_ts
+
+        now = time.monotonic()
+        if _knowledge_cache is not None and (now - _knowledge_cache_ts) < _knowledge_cache_ttl:
+            return _knowledge_cache
+
         vault_root = state.vault.root
 
         def _walk() -> list[tuple[str, str]]:
@@ -602,7 +617,10 @@ def create_routes(state: AppState) -> APIRouter:
                     results.append((rel, content))
             return results
 
-        return await asyncio.to_thread(_walk)
+        notes = await asyncio.to_thread(_walk)
+        _knowledge_cache = notes
+        _knowledge_cache_ts = now
+        return notes
 
     @protected.get("/knowledge/sot", response_model=KnowledgeListResponse)
     async def knowledge_sot(
