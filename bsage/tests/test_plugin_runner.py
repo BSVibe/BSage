@@ -249,6 +249,19 @@ class TestInputSchemaValidation:
             await runner.run(meta, mock_context)
 
 
+    async def test_invalid_schema_definition_raises_error(self, mock_context) -> None:
+        schema = {
+            "type": "nonexistent_type",  # invalid JSON Schema type
+        }
+        meta = _make_plugin_meta(input_schema=schema)
+        meta._execute_fn = AsyncMock(return_value={})
+        mock_context.input_data = {"anything": "value"}
+
+        runner = PluginRunner()
+        with pytest.raises(PluginRunError, match="invalid input_schema"):
+            await runner.run(meta, mock_context)
+
+
 class TestCredentialValidation:
     """Test required credential validation in PluginRunner."""
 

@@ -173,3 +173,7 @@ class PluginRunner:
             raise PluginRunError(
                 f"Plugin '{meta.name}' input_schema validation failed: {exc.message}"
             ) from exc
+        except jsonschema.SchemaError as exc:
+            raise PluginRunError(
+                f"Plugin '{meta.name}' has an invalid input_schema: {exc.message}"
+            ) from exc
