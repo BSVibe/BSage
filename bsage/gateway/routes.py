@@ -3,21 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from bsage.core.exceptions import VaultPathError
 from bsage.core.patterns import WIKILINK_RE
 from bsage.core.plugin_loader import PluginMeta
 from bsage.core.skill_loader import SkillMeta
+from bsage.garden.markdown_utils import extract_frontmatter, extract_title
+from bsage.garden.writer import GardenNote
 from bsage.gateway.dependencies import AppState
 
 logger = structlog.get_logger(__name__)
@@ -50,6 +54,71 @@ class CredentialStoreRequest(BaseModel):
     """Request body for POST /api/entries/{name}/credentials."""
 
     credentials: dict[str, str]
+
+
+class NotifyRequest(BaseModel):
+    """Request body for POST /api/notify."""
+
+    message: str = Field(..., min_length=1)
+    channel: str | None = None
+    metadata: dict[str, Any] = {}
+
+
+class NotifyResponse(BaseModel):
+    """Response for POST /api/notify."""
+
+    sent: bool
+    channel: str | None = None
+    error: str | None = None
+
+
+class SearchResultItem(BaseModel):
+    """A single search result."""
+
+    title: str
+    path: str
+    content_preview: str
+    relevance_score: float
+    tags: list[str]
+
+
+class SearchResponse(BaseModel):
+    """Response for GET /api/knowledge/search."""
+
+    results: list[SearchResultItem]
+
+
+class CreateEntryRequest(BaseModel):
+    """Request body for POST /api/knowledge/entries."""
+
+    title: str
+    content: str
+    note_type: str = "idea"
+    tags: list[str] = []
+    links: list[str] = []
+    source: str = "api"
+    metadata: dict[str, Any] = {}
+
+
+class CreateEntryResponse(BaseModel):
+    """Response for POST /api/knowledge/entries."""
+
+    id: str
+    path: str
+    created_at: str
+
+
+class CreateDecisionRequest(BaseModel):
+    """Request body for POST /api/knowledge/decisions."""
+
+    title: str
+    decision: str
+    reasoning: str
+    note_type: str = "insight"
+    alternatives: list[str] = []
+    context: str = ""
+    tags: list[str] = []
+    source: str = "api"
 
 
 def _find_entry(state: AppState, name: str) -> PluginMeta | SkillMeta:
@@ -497,6 +566,249 @@ def create_routes(state: AppState) -> APIRouter:
                 tag_map.setdefault(tag, []).append(rel)
 
         return {"tags": tag_map, "truncated": truncated}
+
+    # -- Knowledge search ----------------------------------------------------
+
+    @protected.get("/knowledge/search", response_model=SearchResponse)
+    async def knowledge_search(
+        q: str = Query(..., min_length=1, description="Search query"),
+        limit: int = Query(default=5, ge=1, le=50, description="Max results"),
+    ) -> SearchResponse:
+        """Semantic search over vault knowledge notes with full-text fallback."""
+        results: list[SearchResultItem] = []
+
+        # Try semantic search via vector store + embedder
+        if state.vector_store is not None and state.embedder is not None and state.embedder.enabled:
+            try:
+                query_embedding = await state.embedder.embed(q)
+                vector_results = await state.vector_store.search(query_embedding, top_k=limit)
+                all_notes = await _scan_vault_md_files()
+                note_map = {rel: content for rel, content in all_notes}
+
+                for path, score in vector_results:
+                    content = note_map.get(path, "")
+                    if not content:
+                        continue
+                    fm = extract_frontmatter(content)
+                    title = extract_title(content) or Path(path).stem
+                    note_tags = [str(t).lower() for t in fm.get("tags", []) or []]
+                    body = content
+                    if content.startswith("---\n"):
+                        try:
+                            end_idx = content.index("\n---\n", 4)
+                            body = content[end_idx + 5 :].strip()
+                        except ValueError:
+                            pass
+                    preview = body[:200].strip()
+                    results.append(
+                        SearchResultItem(
+                            title=title,
+                            path=path,
+                            content_preview=preview,
+                            relevance_score=round(score, 4),
+                            tags=note_tags,
+                        )
+                    )
+                return SearchResponse(results=results)
+            except (RuntimeError, OSError, ValueError):
+                logger.warning("vector_search_failed_fallback", exc_info=True)
+                results = []
+
+        # Full-text fallback
+        all_notes = await _scan_vault_md_files()
+        query_lower = q.lower()
+
+        scored: list[tuple[float, str, str]] = []
+        for rel, content in all_notes:
+            content_lower = content.lower()
+            count = content_lower.count(query_lower)
+            if count > 0:
+                scored.append((count, rel, content))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        scored = scored[:limit]
+
+        for count, rel, content in scored:
+            fm = extract_frontmatter(content)
+            title = extract_title(content) or Path(rel).stem
+            note_tags = [str(t).lower() for t in fm.get("tags", []) or []]
+            body = content
+            if content.startswith("---\n"):
+                try:
+                    end_idx = content.index("\n---\n", 4)
+                    body = content[end_idx + 5 :].strip()
+                except ValueError:
+                    pass
+            preview = body[:200].strip()
+            # Normalize count to 0-1 range (simple heuristic)
+            score = min(count / 10.0, 1.0)
+            results.append(
+                SearchResultItem(
+                    title=title,
+                    path=rel,
+                    content_preview=preview,
+                    relevance_score=round(score, 4),
+                    tags=note_tags,
+                )
+            )
+
+        return SearchResponse(results=results)
+
+    # -- Knowledge write -----------------------------------------------------
+
+    @protected.post(
+        "/knowledge/entries",
+        response_model=CreateEntryResponse,
+        status_code=201,
+    )
+    async def create_knowledge_entry(body: CreateEntryRequest) -> CreateEntryResponse:
+        """Create a new knowledge entry via GardenWriter."""
+        # Build content with wikilinks appended
+        content = body.content
+        if body.links:
+            wikilinks = " ".join(f"[[{link}]]" for link in body.links)
+            content = f"{content}\n\n{wikilinks}"
+
+        note = GardenNote(
+            title=body.title,
+            content=content,
+            note_type=body.note_type,
+            source=body.source,
+            related=list(body.links),
+            tags=list(body.tags),
+            extra_fields=dict(body.metadata),
+        )
+
+        try:
+            written_path = await state.garden_writer.write_garden(note)
+        except Exception as exc:
+            logger.exception("knowledge_entry_write_failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        rel_path = str(written_path)
+        with contextlib.suppress(ValueError, AttributeError):
+            rel_path = str(written_path.relative_to(state.vault.root))
+
+        now = datetime.now(tz=UTC).isoformat()
+        note_id = Path(rel_path).stem
+
+        return CreateEntryResponse(id=note_id, path=rel_path, created_at=now)
+
+    # -- Decision records ----------------------------------------------------
+
+    @protected.post(
+        "/knowledge/decisions",
+        response_model=CreateEntryResponse,
+        status_code=201,
+    )
+    async def create_decision_record(body: CreateDecisionRequest) -> CreateEntryResponse:
+        """Create a structured decision record as an insight note."""
+        # Build structured markdown content from template
+        alt_lines = "\n".join(f"- {alt}" for alt in body.alternatives)
+        content_parts = [
+            "## Decision\n",
+            body.decision,
+            "\n\n## Reasoning\n",
+            body.reasoning,
+            "\n\n## Alternatives Considered\n",
+            alt_lines if alt_lines else "_None._",
+            "\n\n## Context\n",
+            body.context if body.context else "_No additional context._",
+        ]
+        content = "".join(content_parts)
+
+        note = GardenNote(
+            title=body.title,
+            content=content,
+            note_type=body.note_type,
+            source=body.source,
+            tags=list(body.tags),
+            extra_fields={"decision_record": True},
+        )
+
+        try:
+            written_path = await state.garden_writer.write_garden(note)
+        except Exception as exc:
+            logger.exception("decision_record_write_failed")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        rel_path = str(written_path)
+        with contextlib.suppress(ValueError, AttributeError):
+            rel_path = str(written_path.relative_to(state.vault.root))
+
+        now = datetime.now(tz=UTC).isoformat()
+        note_id = Path(rel_path).stem
+
+        return CreateEntryResponse(id=note_id, path=rel_path, created_at=now)
+
+    # -- Notification ---------------------------------------------------------
+
+    @protected.post("/notify", response_model=NotifyResponse)
+    async def send_notification(body: NotifyRequest) -> NotifyResponse:
+        """Send a notification through BSage's multi-channel notification system.
+
+        Used by BSNexus and other BSVibe services to send messages without
+        managing channel SDKs directly.
+        """
+        from bsage.core.plugin_loader import PluginMeta
+        from bsage.core.skill_context import SkillContext
+
+        if state.agent_loop is None:
+            raise HTTPException(status_code=503, detail="Gateway not initialized")
+
+        registry = state.agent_loop._registry
+
+        # Find the target plugin(s) with _notify_fn
+        if body.channel is not None:
+            # Route to specific channel
+            meta = registry.get(body.channel)
+            if meta is None:
+                return NotifyResponse(
+                    sent=False,
+                    error=f"Channel '{body.channel}' not found in registry",
+                )
+            if not isinstance(meta, PluginMeta) or meta._notify_fn is None:
+                return NotifyResponse(
+                    sent=False,
+                    error=f"Channel '{body.channel}' has no notify handler",
+                )
+            target_meta = meta
+        else:
+            # Auto-route: pick first plugin with a _notify_fn
+            target_meta = None
+            for meta in registry.values():
+                if isinstance(meta, PluginMeta) and meta._notify_fn is not None:
+                    target_meta = meta
+                    break
+            if target_meta is None:
+                return NotifyResponse(
+                    sent=False,
+                    error="No notification channel available",
+                )
+
+        # Build a minimal context with the message + metadata
+        input_data: dict[str, Any] = {"message": body.message}
+        if body.metadata:
+            input_data["metadata"] = body.metadata
+
+        ctx = SkillContext(
+            garden=state.garden_writer,
+            llm=state.llm_client,
+            config={},
+            logger=structlog.get_logger("notify"),
+            input_data=input_data,
+        )
+
+        try:
+            await state.runner.run_notify(target_meta, ctx)
+            return NotifyResponse(sent=True, channel=target_meta.name)
+        except Exception as exc:
+            logger.exception("notify_send_failed", channel=target_meta.name)
+            return NotifyResponse(
+                sent=False,
+                channel=target_meta.name,
+                error=str(exc),
+            )
 
     # -- Config --------------------------------------------------------------
 
