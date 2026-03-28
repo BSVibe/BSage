@@ -248,7 +248,6 @@ class TestInputSchemaValidation:
         with pytest.raises(PluginRunError, match="input_schema"):
             await runner.run(meta, mock_context)
 
-
     async def test_invalid_schema_definition_raises_error(self, mock_context) -> None:
         schema = {
             "type": "nonexistent_type",  # invalid JSON Schema type
