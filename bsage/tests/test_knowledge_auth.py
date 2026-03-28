@@ -93,6 +93,16 @@ def _make_state(
         return_value=vault_root / "ideas" / "test.md",
     )
 
+    # Ontology mock
+    ontology = MagicMock()
+    ontology.get_entity_types.return_value = {
+        "idea": {"folder": "ideas/", "knowledge_layer": "semantic"},
+        "insight": {"folder": "insights/", "knowledge_layer": "semantic"},
+        "fact": {"folder": "facts/", "knowledge_layer": "semantic"},
+        "task": {"folder": "tasks/", "knowledge_layer": "episodic"},
+    }
+    state.ontology = ontology
+
     state.auth_provider = auth_provider
     state.get_current_user = create_get_current_user(
         provider=auth_provider,

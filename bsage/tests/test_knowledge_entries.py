@@ -60,6 +60,16 @@ def mock_state(vault_root):
     state.garden_writer = AsyncMock()
     state.garden_writer.write_garden = AsyncMock(return_value=written_path)
 
+    # Ontology mock
+    ontology = MagicMock()
+    ontology.get_entity_types.return_value = {
+        "idea": {"folder": "ideas/", "knowledge_layer": "semantic"},
+        "insight": {"folder": "insights/", "knowledge_layer": "semantic"},
+        "fact": {"folder": "facts/", "knowledge_layer": "semantic"},
+        "task": {"folder": "tasks/", "knowledge_layer": "episodic"},
+    }
+    state.ontology = ontology
+
     async def _mock_get_current_user():
         return MagicMock(id="test-user", email="test@example.com", role="authenticated")
 

@@ -97,6 +97,7 @@ class CreateEntryRequest(BaseModel):
 
     title: str
     content: str
+    note_type: str = "idea"
     tags: list[str] = []
     links: list[str] = []
     source: str = "api"
@@ -117,6 +118,7 @@ class CreateDecisionRequest(BaseModel):
     title: str
     decision: str
     reasoning: str
+    note_type: str = "insight"
     alternatives: list[str] = []
     context: str = ""
     tags: list[str] = []
@@ -571,18 +573,20 @@ def create_routes(state: AppState) -> APIRouter:
 
     # -- Knowledge provider --------------------------------------------------
 
-    sot_note_types = {"fact", "insight"}
-    sop_note_types = {"task"}
-    knowledge_dirs = [
-        "facts",
-        "insights",
-        "tasks",
-        "ideas",
-        "projects",
-        "people",
-        "events",
-        "preferences",
-    ]
+    def _derive_knowledge_dirs() -> list[str]:
+        """Derive knowledge directories from the ontology entity types."""
+        entity_types = state.ontology.get_entity_types()
+        dirs: list[str] = []
+        for _etype, info in entity_types.items():
+            folder = info.get("folder")
+            if folder:
+                # Strip trailing slash for filesystem scanning
+                dirs.append(folder.rstrip("/"))
+        return dirs
+
+    # Default SOT/SOP note type sets — callers can override via query param
+    _default_sot_note_types = {"fact", "insight"}
+    _default_sop_note_types = {"task"}
 
     _knowledge_cache: list[tuple[str, str]] | None = None
     _knowledge_cache_ts: float = 0.0
@@ -604,7 +608,7 @@ def create_routes(state: AppState) -> APIRouter:
 
         def _walk() -> list[tuple[str, str]]:
             results: list[tuple[str, str]] = []
-            for d in knowledge_dirs:
+            for d in _derive_knowledge_dirs():
                 base = vault_root / d
                 if not base.is_dir():
                     continue
@@ -629,6 +633,10 @@ def create_routes(state: AppState) -> APIRouter:
             alias="type",
             description="Knowledge type: sot or sop",
         ),
+        note_types: str | None = Query(
+            default=None,
+            description="Comma-separated note types to filter (overrides type param)",
+        ),
         project_id: str | None = Query(
             default=None,
             description="Filter by project",
@@ -646,7 +654,12 @@ def create_routes(state: AppState) -> APIRouter:
         ),
     ) -> KnowledgeListResponse:
         """Return paginated knowledge entries (SOT/SOP)."""
-        target_types = sop_note_types if knowledge_type == "sop" else sot_note_types
+        if note_types:
+            target_types = {t.strip() for t in note_types.split(",") if t.strip()}
+        else:
+            target_types = (
+                _default_sop_note_types if knowledge_type == "sop" else _default_sot_note_types
+            )
         tag_filter = {t.strip().lower() for t in tags.split(",") if t.strip()} if tags else set()
 
         all_notes = await _scan_knowledge_notes()
@@ -812,7 +825,7 @@ def create_routes(state: AppState) -> APIRouter:
         note = GardenNote(
             title=body.title,
             content=content,
-            note_type="idea",
+            note_type=body.note_type,
             source=body.source,
             related=list(body.links),
             tags=list(body.tags),
@@ -860,7 +873,7 @@ def create_routes(state: AppState) -> APIRouter:
         note = GardenNote(
             title=body.title,
             content=content,
-            note_type="insight",
+            note_type=body.note_type,
             source=body.source,
             tags=list(body.tags),
             extra_fields={"decision_record": True},

@@ -101,6 +101,20 @@ def mock_state(vault_root):
     state.chat_bridge = AsyncMock()
     state.garden_writer = AsyncMock()
 
+    # Ontology mock — provides entity types with folders
+    ontology = MagicMock()
+    ontology.get_entity_types.return_value = {
+        "idea": {"folder": "ideas/", "knowledge_layer": "semantic"},
+        "insight": {"folder": "insights/", "knowledge_layer": "semantic"},
+        "fact": {"folder": "facts/", "knowledge_layer": "semantic"},
+        "task": {"folder": "tasks/", "knowledge_layer": "episodic"},
+        "project": {"folder": "projects/", "knowledge_layer": "semantic"},
+        "person": {"folder": "people/", "knowledge_layer": "semantic"},
+        "event": {"folder": "events/", "knowledge_layer": "episodic"},
+        "preference": {"folder": "preferences/", "knowledge_layer": "procedural"},
+    }
+    state.ontology = ontology
+
     async def _mock_get_current_user():
         return MagicMock(id="test-user", email="test@example.com", role="authenticated")
 
@@ -205,6 +219,37 @@ class TestKnowledgeSOTEndpoint:
         data = resp.json()
         assert data["total"] == 1
         assert data["items"][0]["title"] == "Python Typing Best Practices"
+
+    def test_sot_note_types_override(self, client):
+        """note_types query param overrides default sot/sop filtering."""
+        # Request only 'idea' notes via note_types
+        resp = client.get("/api/knowledge/sot", params={"note_types": "idea"})
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["title"] == "Random Thought"
+
+    def test_sot_note_types_multiple(self, client):
+        """note_types accepts comma-separated values."""
+        resp = client.get("/api/knowledge/sot", params={"note_types": "fact,task"})
+        data = resp.json()
+        assert data["total"] == 3
+        titles = {item["title"] for item in data["items"]}
+        assert "Python Typing Best Practices" in titles
+        assert "Docker Compose Tips" in titles
+        assert "Deploy Pipeline Setup" in titles
+
+    def test_sot_note_types_overrides_type_param(self, client):
+        """note_types takes precedence over type=sop."""
+        resp = client.get(
+            "/api/knowledge/sot",
+            params={"type": "sop", "note_types": "fact"},
+        )
+        data = resp.json()
+        # Should return facts, not tasks (note_types overrides type)
+        assert data["total"] == 2
+        titles = {item["title"] for item in data["items"]}
+        assert "Python Typing Best Practices" in titles
+        assert "Docker Compose Tips" in titles
 
 
 class TestKnowledgeSearchEndpoint:
@@ -429,6 +474,52 @@ class TestKnowledgeEntriesEndpoint:
         resp = client.post("/api/knowledge/entries", json={})
         assert resp.status_code == 422
 
+    def test_create_entry_custom_note_type(self, client, mock_state, vault_root):
+        """note_type field overrides the default 'idea' type."""
+        mock_writer = AsyncMock()
+        created_path = vault_root / "facts" / "custom-type-note.md"
+        mock_writer.write_garden = AsyncMock(return_value=created_path)
+        mock_state.garden_writer = mock_writer
+
+        app = FastAPI()
+        app.include_router(create_routes(mock_state))
+        test_client = TestClient(app)
+
+        resp = test_client.post(
+            "/api/knowledge/entries",
+            json={
+                "title": "Custom Type Note",
+                "content": "A fact note.",
+                "note_type": "fact",
+                "source": "test",
+            },
+        )
+        assert resp.status_code == 201
+        call_arg = mock_writer.write_garden.call_args[0][0]
+        assert call_arg.note_type == "fact"
+
+    def test_create_entry_default_note_type_is_idea(self, client, mock_state, vault_root):
+        """Without note_type field, default is 'idea'."""
+        mock_writer = AsyncMock()
+        created_path = vault_root / "ideas" / "default-type.md"
+        mock_writer.write_garden = AsyncMock(return_value=created_path)
+        mock_state.garden_writer = mock_writer
+
+        app = FastAPI()
+        app.include_router(create_routes(mock_state))
+        test_client = TestClient(app)
+
+        resp = test_client.post(
+            "/api/knowledge/entries",
+            json={
+                "title": "Default Type Note",
+                "content": "Should be idea.",
+            },
+        )
+        assert resp.status_code == 201
+        call_arg = mock_writer.write_garden.call_args[0][0]
+        assert call_arg.note_type == "idea"
+
 
 class TestDecisionRecordEndpoint:
     """Tests for POST /api/knowledge/decisions."""
@@ -610,6 +701,33 @@ class TestDecisionRecordEndpoint:
         assert resp.status_code == 201
         call_arg = mock_writer.write_garden.call_args[0][0]
         assert call_arg.tags == ["infra", "security"]
+
+    def test_create_decision_custom_note_type(self, client, mock_state, vault_root):
+        """note_type field overrides the default 'insight' type."""
+        mock_writer = AsyncMock()
+        created_path = vault_root / "facts" / "fact-decision.md"
+        mock_writer.write_garden = AsyncMock(return_value=created_path)
+        mock_state.garden_writer = mock_writer
+
+        app = FastAPI()
+        app.include_router(create_routes(mock_state))
+        test_client = TestClient(app)
+
+        resp = test_client.post(
+            "/api/knowledge/decisions",
+            json={
+                "title": "Custom Type Decision",
+                "decision": "A fact-based decision.",
+                "reasoning": "Based on verified data.",
+                "note_type": "fact",
+                "alternatives": [],
+                "context": "",
+                "source": "test",
+            },
+        )
+        assert resp.status_code == 201
+        call_arg = mock_writer.write_garden.call_args[0][0]
+        assert call_arg.note_type == "fact"
 
     def test_create_decision_writer_error(self, client, mock_state):
         """GardenWriter failure returns 500."""
