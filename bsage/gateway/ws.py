@@ -104,8 +104,10 @@ def create_ws_routes(
     Args:
         approval_interface: If provided, ``approval_response`` messages are
             routed to this interface to resolve pending approval futures.
-        auth_provider: If provided, WebSocket connections must authenticate
-            via first-message token exchange before joining the broadcast pool.
+        auth_provider: Required for WebSocket connections.  When provided,
+            clients must authenticate via first-message token exchange before
+            joining the broadcast pool.  When ``None``, all connections are
+            rejected with code 4003 (authentication not configured).
     """
     ws_router = APIRouter()
 
@@ -114,8 +116,14 @@ def create_ws_routes(
         # Accept the socket but don't add to broadcast pool yet
         await websocket.accept()
 
+        # Always require authentication — reject if no auth provider configured
+        if auth_provider is None:
+            logger.warning("ws_rejected", reason="auth not configured")
+            await websocket.close(code=4003, reason="Authentication not configured")
+            return
+
         # Authenticate before joining the broadcast pool
-        if auth_provider is not None and not await _authenticate_ws(websocket, auth_provider):
+        if not await _authenticate_ws(websocket, auth_provider):
             return
 
         # Now safe to add to the broadcast pool

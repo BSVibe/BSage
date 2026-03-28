@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 
+import jsonschema
 import structlog
 
 from bsage.core.events import emit_event
@@ -46,6 +47,7 @@ class PluginRunner:
         )
 
         await self._auto_inject_credentials(meta, context)
+        self._validate_input_schema(meta, context)
 
         if meta._execute_fn is None:
             raise PluginRunError(f"Plugin '{meta.name}' has no execute function")
@@ -151,3 +153,27 @@ class PluginRunner:
                 f"Plugin '{meta.name}' missing required credential fields: {missing}. "
                 f"Run: bsage setup {meta.name}"
             )
+
+    @staticmethod
+    def _validate_input_schema(meta: PluginMeta, context: SkillContext) -> None:
+        """Validate context.input_data against meta.input_schema if defined."""
+        if meta.input_schema is None:
+            return
+
+        data = context.input_data
+        if data is None:
+            raise PluginRunError(
+                f"Plugin '{meta.name}' requires input_data matching input_schema, "
+                f"but input_data is None"
+            )
+
+        try:
+            jsonschema.validate(instance=data, schema=meta.input_schema)
+        except jsonschema.ValidationError as exc:
+            raise PluginRunError(
+                f"Plugin '{meta.name}' input_schema validation failed: {exc.message}"
+            ) from exc
+        except jsonschema.SchemaError as exc:
+            raise PluginRunError(
+                f"Plugin '{meta.name}' has an invalid input_schema: {exc.message}"
+            ) from exc

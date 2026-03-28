@@ -491,6 +491,48 @@ class TestCreateApp:
         assert isinstance(app, FastAPI)
         assert app.title == "BSage Gateway"
 
+    def test_create_app_uses_configured_cors_origins(self, tmp_path) -> None:
+        settings = Settings(
+            vault_path=tmp_path / "vault",
+            skills_dir=tmp_path / "skills",
+            tmp_dir=tmp_path / "tmp",
+            credentials_dir=tmp_path / "creds",
+            prompts_dir=tmp_path / "prompts",
+            cors_origins=["https://app.example.com"],
+        )
+        app = create_app(settings)
+        # Find the CORSMiddleware and check its allow_origins
+        from starlette.middleware.cors import CORSMiddleware
+
+        cors_mw = None
+        # Starlette wraps middleware as app.middleware_stack
+        # Check via the user_middleware list
+        for mw in app.user_middleware:
+            if mw.cls is CORSMiddleware:
+                cors_mw = mw
+                break
+        assert cors_mw is not None
+        assert cors_mw.kwargs["allow_origins"] == ["https://app.example.com"]
+
+    def test_default_cors_origins(self, tmp_path) -> None:
+        settings = Settings(
+            vault_path=tmp_path / "vault",
+            skills_dir=tmp_path / "skills",
+            tmp_dir=tmp_path / "tmp",
+            credentials_dir=tmp_path / "creds",
+            prompts_dir=tmp_path / "prompts",
+        )
+        app = create_app(settings)
+        from starlette.middleware.cors import CORSMiddleware
+
+        cors_mw = None
+        for mw in app.user_middleware:
+            if mw.cls is CORSMiddleware:
+                cors_mw = mw
+                break
+        assert cors_mw is not None
+        assert "http://localhost:5173" in cors_mw.kwargs["allow_origins"]
+
 
 class TestChatEndpoint:
     """Test POST /api/chat."""
@@ -893,14 +935,32 @@ class TestAuthEndpoints:
 class TestWebSocketAuth:
     """Test WebSocket authentication flow."""
 
-    async def test_ws_accepts_without_auth_when_disabled(self) -> None:
-        """When auth_provider is None, WS connects without auth."""
+    async def test_ws_rejects_when_auth_provider_is_none(self) -> None:
+        """When auth_provider is None (jwt_secret empty), WS must be rejected."""
+        from starlette.websockets import WebSocketDisconnect
+
         from bsage.gateway.ws import create_ws_routes
 
         app = FastAPI()
         app.include_router(create_ws_routes(auth_provider=None))
 
         with TestClient(app) as c, c.websocket_connect("/ws") as ws:
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                ws.receive_json()
+            assert exc_info.value.code == 4003
+
+    async def test_ws_connects_with_valid_auth(self) -> None:
+        """When auth_provider verifies token, WS connects successfully."""
+        from bsage.gateway.ws import create_ws_routes
+
+        mock_provider = AsyncMock()
+        mock_provider.verify_token = AsyncMock(return_value=True)
+
+        app = FastAPI()
+        app.include_router(create_ws_routes(auth_provider=mock_provider))
+
+        with TestClient(app) as c, c.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "auth", "token": "valid-token"})
             ws.send_json({"type": "ping"})
             data = ws.receive_json()
             assert data["type"] == "ack"
