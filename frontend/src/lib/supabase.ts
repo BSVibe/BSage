@@ -1,14 +1,30 @@
 /**
  * Simple token store for the redirect-based auth flow.
  * Replaces the Supabase JS client — tokens come from the
- * /api/auth/callback redirect (URL hash fragment).
+ * /auth/callback redirect (URL hash fragment).
  */
 
 const ACCESS_TOKEN_KEY = "bsage_access_token";
 const REFRESH_TOKEN_KEY = "bsage_refresh_token";
 
 export function getAccessToken(): string | null {
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (!token) return null;
+
+  // Validate JWT expiry
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      clearTokens();
+      return null;
+    }
+  } catch {
+    // Malformed token — treat as invalid
+    clearTokens();
+    return null;
+  }
+
+  return token;
 }
 
 export function setTokens(accessToken: string, refreshToken: string): void {

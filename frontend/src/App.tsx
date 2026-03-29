@@ -64,7 +64,7 @@ export default function App() {
             onClick={() => redirectToLogin()}
             className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white hover:bg-accent-dark focus:outline-none focus:ring-2 focus:ring-accent/50 focus:ring-offset-2 focus:ring-offset-gray-950 transition-colors"
           >
-            Sign in
+            Sign in with BSVibe
           </button>
         </div>
       </div>

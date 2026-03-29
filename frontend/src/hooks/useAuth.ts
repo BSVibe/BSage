@@ -33,7 +33,7 @@ export function useAuth(): AuthState {
 
 /** Redirect browser to external auth login page. */
 export function redirectToLogin() {
-  const callbackUrl = `${window.location.origin}/api/auth/callback`;
+  const callbackUrl = `${window.location.origin}/auth/callback`;
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
   window.location.href = `${AUTH_LOGIN_URL}?redirect_uri=${encodeURIComponent(callbackUrl)}&state=${encodeURIComponent(state)}`;
 }
