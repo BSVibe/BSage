@@ -17,10 +17,10 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
 
   if (messages.length === 0 && !isLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500">
+      <div className="flex-1 flex items-center justify-center text-gray-600">
         <div className="text-center">
-          <p className="text-lg font-medium">Start a conversation</p>
-          <p className="text-sm mt-1">Ask anything about your 2nd Brain</p>
+          <p className="text-lg font-medium text-gray-500">Start a conversation</p>
+          <p className="text-sm mt-1 text-gray-600">Ask anything about your 2nd Brain</p>
         </div>
       </div>
     );

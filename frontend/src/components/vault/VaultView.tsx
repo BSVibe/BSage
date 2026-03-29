@@ -39,7 +39,7 @@ function splitFrontmatter(text: string): { meta: Record<string, string>[]; body:
   return { meta: entries, body };
 }
 
-/** Build a lookup: lowercase filename stem → relative path. */
+/** Build a lookup: lowercase filename stem -> relative path. */
 function buildStemLookup(tree: VaultTreeEntry[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const entry of tree) {
@@ -69,8 +69,8 @@ function ViewModeTabs({
   className?: string;
 }) {
   const base = "flex items-center gap-1.5 px-4 py-2 rounded-md text-xs font-medium transition-colors";
-  const active = "bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 shadow-sm";
-  const inactive = "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300";
+  const active = "bg-gray-800 text-gray-100 shadow-sm";
+  const inactive = "text-gray-500 hover:text-gray-300";
   return (
     <div className={`flex items-center gap-0.5 rounded-lg p-1 ${className ?? ""}`}>
       <button onClick={() => onChange("notes")} className={`${base} ${current === "notes" ? active : inactive}`}>
@@ -132,9 +132,7 @@ export function VaultView() {
   const resolveWikiLink = useCallback(
     (target: string): string | null => {
       const lower = target.toLowerCase();
-      // Try exact stem match
       if (stemLookup.has(lower)) return stemLookup.get(lower)!;
-      // Try with .md extension
       const withMd = lower.endsWith(".md") ? lower : lower + ".md";
       for (const entry of tree) {
         for (const file of entry.files) {
@@ -223,7 +221,7 @@ export function VaultView() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-400">Loading...</div>
+      <div className="flex items-center justify-center h-full text-gray-600">Loading...</div>
     );
   }
 
@@ -236,7 +234,7 @@ export function VaultView() {
             <ViewModeTabs
               current={viewMode}
               onChange={setViewMode}
-              className="bg-gray-100 dark:bg-gray-800"
+              className="bg-gray-900"
             />
           </div>
           <div className="flex-1 min-h-0 relative">
@@ -247,14 +245,14 @@ export function VaultView() {
         /* Notes mode */
         <div className="flex-1 min-h-0 flex">
           {/* Left panel: title + search + tags + directory tree */}
-          <div data-testid="vault-file-tree" className="w-56 shrink-0 border-r border-gray-200 dark:border-gray-700 overflow-y-auto p-3 scrollbar-thin">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">Vault</h2>
+          <div data-testid="vault-file-tree" className="w-56 shrink-0 border-r border-gray-800 overflow-y-auto p-3 scrollbar-thin">
+            <h2 className="text-lg font-semibold text-gray-100 mb-3">Vault</h2>
             <SearchPanel onSelectFile={handleSelectFile} />
 
             <TagCloud activeTag={activeTag} onSelectTag={handleTagSelect} />
 
             {tree.length === 0 || (tree.length === 1 && tree[0].dirs.length === 0 && tree[0].files.length === 0) ? (
-              <div className="text-center py-8 text-gray-400">
+              <div className="text-center py-8 text-gray-600">
                 <FolderOpen className="w-6 h-6 mx-auto mb-2 opacity-50" />
                 <p className="text-xs">Vault is empty</p>
               </div>
@@ -274,12 +272,12 @@ export function VaultView() {
               <ViewModeTabs
                 current={viewMode}
                 onChange={setViewMode}
-                className="bg-gray-100 dark:bg-gray-800"
+                className="bg-gray-900"
               />
             </div>
             <div className="flex-1 overflow-y-auto px-6 pb-6 scrollbar-thin">
             {!selectedPath && (
-              <div className="flex items-center justify-center h-full text-gray-400">
+              <div className="flex items-center justify-center h-full text-gray-600">
                 <div className="text-center">
                   <FolderOpen className="w-8 h-8 mx-auto mb-2 opacity-50" />
                   <p className="text-sm">Select a file to view its contents</p>
@@ -287,16 +285,16 @@ export function VaultView() {
               </div>
             )}
             {selectedPath && fileLoading && (
-              <p className="text-sm text-gray-400">Loading...</p>
+              <p className="text-sm text-gray-600">Loading...</p>
             )}
             {selectedPath && !fileLoading && fileContent !== null && (
               <div>
                 {/* Header: path + view toggle */}
-                <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-200 dark:border-gray-700">
-                  <p className="text-xs text-gray-400 font-mono truncate">{selectedPath}</p>
+                <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-800">
+                  <p className="text-xs text-gray-500 font-mono truncate">{selectedPath}</p>
                   <button
                     onClick={() => setRawMode((r) => !r)}
-                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0 ml-3"
+                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 shrink-0 ml-3"
                     title={rawMode ? "Rendered view" : "Raw view"}
                   >
                     {rawMode ? (
@@ -314,14 +312,14 @@ export function VaultView() {
                 </div>
 
                 {rawMode ? (
-                  <pre data-testid="vault-raw-content" className="text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
+                  <pre data-testid="vault-raw-content" className="text-xs text-gray-300 bg-gray-900 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
                     {fileContent}
                   </pre>
                 ) : (
                   <div>
                     {/* Frontmatter metadata block */}
                     {parsed && parsed.meta.length > 0 && (
-                      <div className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                      <div className="mb-4 rounded-lg border border-gray-800 overflow-hidden">
                         <table className="w-full text-xs">
                           <tbody>
                             {parsed.meta.map(({ key, value }, i) => (
@@ -329,14 +327,14 @@ export function VaultView() {
                                 key={i}
                                 className={
                                   i % 2 === 0
-                                    ? "bg-gray-50 dark:bg-gray-800/50"
-                                    : "bg-white dark:bg-gray-800"
+                                    ? "bg-gray-900/50"
+                                    : "bg-gray-900"
                                 }
                               >
-                                <td className="px-3 py-1.5 font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap w-1/4">
+                                <td className="px-3 py-1.5 font-medium text-gray-500 whitespace-nowrap w-1/4">
                                   {key}
                                 </td>
-                                <td className="px-3 py-1.5 text-gray-700 dark:text-gray-300 font-mono break-all">
+                                <td className="px-3 py-1.5 text-gray-300 font-mono break-all">
                                   {value}
                                 </td>
                               </tr>
@@ -347,7 +345,7 @@ export function VaultView() {
                     )}
 
                     {/* Markdown body */}
-                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                    <div className="prose prose-sm prose-invert max-w-none">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm, remarkObsidian, remarkWikiLink]}
                         rehypePlugins={[rehypeRaw, [rehypeSanitize, { ...defaultSchema, attributes: { ...defaultSchema.attributes, "*": [...(defaultSchema.attributes?.["*"] || []), "className"] } }]]}

@@ -43,26 +43,26 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-100 dark:bg-gray-950">
-        <div className="text-gray-500 dark:text-gray-400">Loading...</div>
+      <div className="flex min-h-screen items-center justify-center bg-gray-950">
+        <div className="text-gray-500">Loading...</div>
       </div>
     );
   }
 
   if (!token) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-100 dark:bg-gray-950 px-4">
+      <div className="flex min-h-screen items-center justify-center bg-gray-950 px-4">
         <div className="w-full max-w-sm space-y-8 text-center">
           <div className="flex flex-col items-center gap-3">
-            <Brain className="w-12 h-12 text-green-600 dark:text-green-400" />
-            <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">BSage</h1>
-            <p className="text-gray-500 dark:text-gray-400">
+            <Brain className="w-12 h-12 text-accent" />
+            <h1 className="text-3xl font-bold text-gray-100">BSage</h1>
+            <p className="text-gray-500">
               Your personal AI-powered 2nd Brain
             </p>
           </div>
           <button
             onClick={() => redirectToLogin()}
-            className="w-full rounded-lg bg-green-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors"
+            className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white hover:bg-accent-dark focus:outline-none focus:ring-2 focus:ring-accent/50 focus:ring-offset-2 focus:ring-offset-gray-950 transition-colors"
           >
             Sign in
           </button>

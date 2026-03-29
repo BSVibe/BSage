@@ -16,7 +16,7 @@ export function Toggle({ checked, onChange, label }: ToggleProps) {
         />
         <div
           className={`w-10 h-5 rounded-full transition-colors ${
-            checked ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+            checked ? "bg-accent" : "bg-gray-700"
           }`}
         />
         <div
@@ -25,7 +25,7 @@ export function Toggle({ checked, onChange, label }: ToggleProps) {
           }`}
         />
       </div>
-      <span className="text-sm text-gray-700 dark:text-gray-300">{label}</span>
+      <span className="text-sm text-gray-300">{label}</span>
     </label>
   );
 }

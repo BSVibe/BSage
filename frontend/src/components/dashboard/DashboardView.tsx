@@ -53,16 +53,16 @@ export function DashboardView() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-400">Loading...</div>
+      <div className="flex items-center justify-center h-full text-gray-600">Loading...</div>
     );
   }
 
   return (
     <div className="h-full overflow-y-auto p-6 scrollbar-thin">
-      <h2 className="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-100">Dashboard</h2>
+      <h2 className="text-lg font-semibold mb-4 text-gray-100">Dashboard</h2>
 
       <section className="mb-8">
-        <h3 className="flex items-center gap-2 text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">
+        <h3 className="flex items-center gap-2 text-sm font-medium text-gray-500 mb-3">
           <Plug className="w-4 h-4" />
           Plugins ({plugins.length})
         </h3>
@@ -81,7 +81,7 @@ export function DashboardView() {
       </section>
 
       <section>
-        <h3 className="flex items-center gap-2 text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">
+        <h3 className="flex items-center gap-2 text-sm font-medium text-gray-500 mb-3">
           <Sparkles className="w-4 h-4" />
           Skills ({skills.length})
         </h3>
@@ -132,30 +132,30 @@ function EntryCard({
   return (
     <div
       data-testid="plugin-card"
-      className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800/50"
+      className="border border-gray-800 rounded-lg p-4 bg-gray-900"
     >
       <div className="flex items-start justify-between mb-2">
         <div className="min-w-0 flex-1">
-          <h4 className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
+          <h4 className="font-medium text-sm text-gray-100 truncate">
             {entry.name}
           </h4>
-          <span className="text-xs text-gray-400">v{entry.version}</span>
+          <span className="text-xs text-gray-600">v{entry.version}</span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0 ml-2">
           {needsSetup && (
-            <span className="text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 rounded-full px-1.5 py-0.5">
+            <span className="text-[10px] bg-amber-900/40 text-amber-300 rounded-full px-1.5 py-0.5">
               needs setup
             </span>
           )}
           {entry.is_dangerous && (
-            <span className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 rounded-full px-1.5 py-0.5">
+            <span className="text-[10px] bg-red-900/40 text-red-300 rounded-full px-1.5 py-0.5">
               dangerous
             </span>
           )}
           <Badge category={entry.category} />
         </div>
       </div>
-      <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 line-clamp-2">
+      <p className="text-xs text-gray-500 mb-3 line-clamp-2">
         {entry.description}
       </p>
       <div className="flex items-center justify-between">
@@ -163,7 +163,7 @@ function EntryCard({
           {needsSetup ? (
             <button
               onClick={() => onSetup(entry.name)}
-              className="text-xs px-3 py-1.5 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/60 transition-colors"
+              className="text-xs px-3 py-1.5 rounded-md bg-amber-900/40 text-amber-300 hover:bg-amber-900/60 transition-colors"
             >
               Setup
             </button>
@@ -171,7 +171,7 @@ function EntryCard({
             <button
               onClick={() => onRun(entry.name)}
               disabled={running || disabled}
-              className="text-xs px-3 py-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors"
+              className="text-xs px-3 py-1.5 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700 disabled:opacity-50 transition-colors"
             >
               {running ? "Running..." : "Run"}
             </button>

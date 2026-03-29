@@ -17,10 +17,10 @@ export function Sidebar({ currentHash }: SidebarProps) {
   const { signOut } = useAuth();
 
   return (
-    <aside className="flex flex-col w-56 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700">
-      <div className="flex items-center gap-2 px-4 py-4 border-b border-gray-200 dark:border-gray-700">
-        <Brain className="w-6 h-6 text-green-600 dark:text-green-400" />
-        <span className="text-lg font-bold text-gray-800 dark:text-gray-100">BSage</span>
+    <aside className="flex flex-col w-56 bg-gray-900 border-r border-gray-800">
+      <div className="flex items-center gap-2 px-4 py-4 border-b border-gray-800">
+        <Brain className="w-6 h-6 text-accent" />
+        <span className="text-lg font-bold text-gray-100">BSage</span>
       </div>
       <nav className="flex-1 py-2">
         {NAV_ITEMS.map(({ hash, icon: Icon, label }) => {
@@ -31,8 +31,8 @@ export function Sidebar({ currentHash }: SidebarProps) {
               href={hash}
               className={`flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm transition-colors ${
                 isActive
-                  ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 font-medium"
-                  : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  ? "bg-accent/15 text-accent-light font-medium"
+                  : "text-gray-400 hover:bg-gray-800 hover:text-gray-300"
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -41,10 +41,10 @@ export function Sidebar({ currentHash }: SidebarProps) {
           );
         })}
       </nav>
-      <div className="border-t border-gray-200 dark:border-gray-700 px-4 py-3">
+      <div className="border-t border-gray-800 px-4 py-3">
         <button
           onClick={() => signOut()}
-          className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+          className="flex items-center gap-2 text-sm text-gray-500 hover:text-red-400 transition-colors"
         >
           <LogOut className="w-3.5 h-3.5" />
           Sign out
