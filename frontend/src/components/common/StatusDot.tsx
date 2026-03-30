@@ -3,7 +3,7 @@ import type { ConnectionState } from "../../api/websocket";
 const COLORS: Record<ConnectionState, string> = {
   connected: "bg-accent",
   disconnected: "bg-gray-500",
-  reconnecting: "bg-yellow-500 animate-pulse",
+  reconnecting: "bg-amber-400 animate-pulse",
 };
 
 const LABELS: Record<ConnectionState, string> = {
