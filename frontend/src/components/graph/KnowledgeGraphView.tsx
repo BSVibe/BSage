@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
-import {
-  Search,
-  X,
-  FileText,
-  Lightbulb,
-  Zap,
-  FolderOpen,
-  ChevronRight,
-} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkObsidian from "@thecae/remark-obsidian";
@@ -17,26 +8,27 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkWikiLink from "../../lib/remarkWikiLink";
 import { api } from "../../api/client";
 import type { VaultGraph, VaultGraphNode, VaultBacklink } from "../../api/types";
+import { Icon } from "../common/Icon";
 
 const NODE_COLORS: Record<string, string> = {
-  garden: "#10b981",
-  seeds: "#3b82f6",
-  actions: "#f59e0b",
+  garden: "#4edea3",
+  seeds: "#adc6ff",
+  actions: "#ffb95f",
   root: "#a78bfa",
 };
 
 const NODE_LABELS: Record<string, string> = {
-  garden: "Ideas & Insights",
+  garden: "Ideas",
   seeds: "Seeds",
   actions: "Actions",
   root: "Other",
 };
 
-const NODE_ICONS: Record<string, typeof Lightbulb> = {
-  garden: Lightbulb,
-  seeds: Zap,
-  actions: FileText,
-  root: FolderOpen,
+const NODE_ICONS: Record<string, string> = {
+  garden: "lightbulb",
+  seeds: "bolt",
+  actions: "description",
+  root: "folder_open",
 };
 
 /** Split YAML frontmatter from markdown body. */
@@ -175,26 +167,31 @@ export function KnowledgeGraphView() {
       // Glow for selected node
       if (isSelected) {
         ctx.beginPath();
-        ctx.arc(node.x, node.y, radius + 8, 0, 2 * Math.PI);
+        ctx.arc(node.x, node.y, radius + 10, 0, 2 * Math.PI);
         const gradient = ctx.createRadialGradient(
-          node.x,
-          node.y,
-          radius,
-          node.x,
-          node.y,
-          radius + 8,
+          node.x, node.y, radius,
+          node.x, node.y, radius + 10,
         );
         gradient.addColorStop(0, nodeColor + "40");
         gradient.addColorStop(1, nodeColor + "00");
         ctx.fillStyle = gradient;
         ctx.fill();
+
+        // Dashed orbit ring
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, radius + 6, 0, 2 * Math.PI);
+        ctx.strokeStyle = nodeColor + "60";
+        ctx.lineWidth = 1 / globalScale;
+        ctx.setLineDash([4 / globalScale, 2 / globalScale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
 
       // Subtle glow for garden nodes
       if (node.group === "garden" && !isSelected) {
         ctx.beginPath();
         ctx.arc(node.x, node.y, radius + 3, 0, 2 * Math.PI);
-        ctx.fillStyle = "rgba(16, 185, 129, 0.12)";
+        ctx.fillStyle = "rgba(78, 222, 163, 0.12)";
         ctx.fill();
       }
 
@@ -215,7 +212,7 @@ export function KnowledgeGraphView() {
       ctx.font = `${fontSize}px "Plus Jakarta Sans", sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      ctx.fillStyle = isSelected ? "#f2f3f7" : "#8187a8";
+      ctx.fillStyle = isSelected ? "#f2f3f7" : "#86948a";
       ctx.fillText(label, node.x, node.y + radius + 2);
     },
     [selectedNode],
@@ -250,33 +247,33 @@ export function KnowledgeGraphView() {
   }, [graphData]);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full relative">
       {/* Main graph area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar: search + filters */}
-        <div className="shrink-0 px-4 py-3 border-b border-gray-800/50 flex items-center gap-3">
+        <div className="shrink-0 px-6 py-3 border-b border-white/5 flex items-center gap-4">
           <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+            <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search nodes..."
-              className="w-full pl-9 pr-8 py-1.5 rounded-lg border border-gray-700 bg-gray-850 text-sm text-gray-100 outline-none focus:border-accent placeholder:text-gray-600"
+              placeholder="Explore network..."
+              className="w-full pl-10 pr-8 py-1.5 rounded-lg border-b-2 border-transparent bg-surface-container-low text-sm text-on-surface outline-none focus:border-accent-light placeholder:text-gray-500 font-sans"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
               >
-                <X className="w-3.5 h-3.5" />
+                <Icon name="close" size={16} />
               </button>
             )}
           </div>
 
           <div className="flex items-center gap-1.5">
             {Object.entries(NODE_LABELS).map(([group, label]) => {
-              const Icon = NODE_ICONS[group] || FolderOpen;
+              const icon = NODE_ICONS[group] || "folder_open";
               const color = NODE_COLORS[group] || "#a78bfa";
               const active = activeFilters.has(group);
               const count = groups[group] || 0;
@@ -284,23 +281,21 @@ export function KnowledgeGraphView() {
                 <button
                   key={group}
                   onClick={() => toggleFilter(group)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                     active
-                      ? "bg-gray-800 text-gray-200 border border-gray-700"
+                      ? "bg-surface-container-high text-on-surface border border-white/5"
                       : "text-gray-500 border border-transparent hover:text-gray-400"
                   }`}
                 >
-                  <Icon
-                    className="w-3 h-3"
-                    style={{ color: active ? color : undefined }}
-                  />
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: "14px", color: active ? color : undefined, opacity: active ? 1 : 0.5 }}
+                  >
+                    {icon}
+                  </span>
                   {label}
                   {count > 0 && (
-                    <span
-                      className="text-[10px] opacity-60"
-                    >
-                      {count}
-                    </span>
+                    <span className="text-[10px] opacity-60">{count}</span>
                   )}
                 </button>
               );
@@ -309,17 +304,17 @@ export function KnowledgeGraphView() {
         </div>
 
         {/* Graph canvas */}
-        <div ref={containerRef} className="flex-1 min-h-0 relative bg-gray-950">
+        <div ref={containerRef} className="flex-1 min-h-0 relative bg-surface-dim">
           {loading && (
-            <div className="flex items-center justify-center h-full text-gray-600">
+            <div className="flex items-center justify-center h-full text-gray-500">
               Loading graph...
             </div>
           )}
           {!loading &&
             (!filteredData || filteredData.nodes.length === 0) && (
-              <div className="flex items-center justify-center h-full text-gray-600">
+              <div className="flex items-center justify-center h-full text-gray-500">
                 <div className="text-center">
-                  <FolderOpen className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <Icon name="folder_open" className="mx-auto mb-2 opacity-50" size={32} />
                   <p className="text-sm">
                     {searchQuery || activeFilters.size < 4
                       ? "No nodes match your filters"
@@ -335,7 +330,7 @@ export function KnowledgeGraphView() {
               height={dimensions.height}
               nodeCanvasObject={nodeCanvasObject}
               onNodeClick={handleNodeClick}
-              linkColor={() => "rgba(42, 45, 66, 0.6)"}
+              linkColor={() => "rgba(60, 74, 66, 0.5)"}
               linkWidth={1.5}
               linkDirectionalParticles={1}
               linkDirectionalParticleWidth={2}
@@ -351,120 +346,132 @@ export function KnowledgeGraphView() {
               enableZoomInteraction={true}
             />
           )}
+
+          {/* Legend */}
+          <div className="absolute bottom-6 left-6 flex flex-col gap-3 bg-surface-container-low/50 backdrop-blur p-4 rounded-xl border border-white/5">
+            {Object.entries(NODE_LABELS).map(([group, label]) => (
+              <div key={group} className="flex items-center gap-3">
+                <div
+                  className="w-2 h-2 rounded-full"
+                  style={{ backgroundColor: NODE_COLORS[group] }}
+                />
+                <span className="font-mono text-[9px] uppercase tracking-widest text-gray-400">{label}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Right sidebar: note detail */}
+      {/* Right sidebar: node inspector */}
       {selectedNode && (
-        <div className="w-80 shrink-0 border-l border-gray-800 bg-gray-900 flex flex-col overflow-hidden">
+        <aside className="w-80 shrink-0 border-l border-accent-light/10 bg-surface flex flex-col overflow-hidden">
           {/* Sidebar header */}
-          <div className="px-4 py-3 border-b border-gray-800/50 flex items-center justify-between shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <div
-                className="w-2.5 h-2.5 rounded-full shrink-0"
-                style={{
-                  backgroundColor:
-                    NODE_COLORS[selectedNode.group] || "#a78bfa",
-                }}
-              />
-              <span className="text-sm font-medium text-gray-100 truncate">
-                {selectedNode.name}
-              </span>
+          <div className="p-6 border-b border-outline-variant/10">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg bg-accent-light/20 flex items-center justify-center">
+                <Icon name="hub" className="text-accent-light" filled />
+              </div>
+              <div>
+                <h2 className="font-headline font-bold text-accent-light leading-none">Node Inspector</h2>
+                <span className="font-mono text-[10px] uppercase tracking-widest text-gray-500">v2.4.0</span>
+              </div>
             </div>
+            <div className="space-y-1">
+              <h1 className="text-xl font-headline font-bold tracking-tight text-on-surface">
+                {selectedNode.name}
+              </h1>
+              <div className="flex gap-2">
+                <span className="font-mono text-[10px] bg-accent-light/10 text-accent-light px-2 py-0.5 rounded">
+                  {selectedNode.id.split("/").pop()}
+                </span>
+                <span className="font-mono text-[10px] bg-secondary/10 text-secondary px-2 py-0.5 rounded uppercase">
+                  {selectedNode.group}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin">
+            {noteLoading && (
+              <p className="text-xs text-gray-500">Loading...</p>
+            )}
+            {!noteLoading && !noteContent && (
+              <p className="text-xs text-gray-500">Unable to load note content.</p>
+            )}
+            {!noteLoading && noteContent && parsed && (
+              <>
+                {/* Frontmatter */}
+                {parsed.meta.length > 0 && (
+                  <section>
+                    <h3 className="font-mono text-[10px] uppercase tracking-widest text-gray-500 mb-3">System Metadata</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      {parsed.meta.map(({ key, value }, i) => (
+                        <div key={i} className="bg-surface-container-low p-3 rounded">
+                          <span className="block font-mono text-[9px] text-gray-500 uppercase">{key}</span>
+                          <span className="font-mono text-xs text-accent-light">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Body */}
+                <section>
+                  <h3 className="font-mono text-[10px] uppercase tracking-widest text-gray-500 mb-3">Preview Content</h3>
+                  <div className="prose prose-sm prose-invert max-w-none prose-p:text-xs prose-headings:text-sm text-on-surface-variant">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm, remarkObsidian, remarkWikiLink]}
+                      rehypePlugins={[
+                        rehypeRaw,
+                        [rehypeSanitize, sanitizeSchema],
+                      ]}
+                    >
+                      {parsed.body}
+                    </ReactMarkdown>
+                  </div>
+                </section>
+
+                {/* Backlinks */}
+                {backlinks.length > 0 && (
+                  <section>
+                    <h3 className="font-mono text-[10px] uppercase tracking-widest text-gray-500 mb-3">
+                      Related Nodes
+                    </h3>
+                    <div className="space-y-2">
+                      {backlinks.map((bl) => (
+                        <button
+                          key={bl.path}
+                          onClick={() => handleNodeClick({ id: bl.path })}
+                          className="flex items-center gap-3 p-2 rounded hover:bg-white/5 transition-all cursor-pointer group w-full text-left"
+                        >
+                          <div className="w-2 h-2 rounded-full bg-accent-light" />
+                          <span className="text-xs font-medium text-gray-300 group-hover:text-accent-light transition-colors flex-1 truncate">
+                            {bl.title}
+                          </span>
+                          <Icon name="arrow_forward_ios" size={14} className="text-gray-600" />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Sidebar footer */}
+          <div className="p-6 border-t border-accent-light/10">
             <button
               onClick={() => {
                 setSelectedNode(null);
                 setNoteContent(null);
               }}
-              className="text-gray-500 hover:text-gray-300 transition-colors"
+              className="w-full py-3 bg-gradient-to-r from-accent-light to-accent text-gray-950 font-headline font-bold text-xs uppercase tracking-widest rounded-lg hover:shadow-[0_0_20px_rgba(78,222,163,0.3)] transition-all active:scale-[0.98]"
             >
-              <X className="w-4 h-4" />
+              Close Inspector
             </button>
           </div>
-
-          {/* File path */}
-          <div className="px-4 py-2 border-b border-gray-800/30 shrink-0">
-            <p className="text-[11px] text-gray-500 font-mono truncate">
-              {selectedNode.id}
-            </p>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto px-4 py-3 scrollbar-thin">
-            {noteLoading && (
-              <p className="text-xs text-gray-600">Loading...</p>
-            )}
-            {!noteLoading && !noteContent && (
-              <p className="text-xs text-gray-600">
-                Unable to load note content.
-              </p>
-            )}
-            {!noteLoading && noteContent && parsed && (
-              <div>
-                {/* Frontmatter */}
-                {parsed.meta.length > 0 && (
-                  <div className="mb-3 rounded-lg border border-gray-800 overflow-hidden">
-                    <table className="w-full text-xs">
-                      <tbody>
-                        {parsed.meta.map(({ key, value }, i) => (
-                          <tr
-                            key={i}
-                            className={
-                              i % 2 === 0 ? "bg-gray-850/50" : "bg-gray-850"
-                            }
-                          >
-                            <td className="px-2.5 py-1 font-medium text-gray-500 whitespace-nowrap">
-                              {key}
-                            </td>
-                            <td className="px-2.5 py-1 text-gray-300 font-mono break-all">
-                              {value}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* Markdown body */}
-                <div className="prose prose-sm prose-invert max-w-none prose-p:text-xs prose-headings:text-sm">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkObsidian, remarkWikiLink]}
-                    rehypePlugins={[
-                      rehypeRaw,
-                      [rehypeSanitize, sanitizeSchema],
-                    ]}
-                  >
-                    {parsed.body}
-                  </ReactMarkdown>
-                </div>
-
-                {/* Backlinks */}
-                {backlinks.length > 0 && (
-                  <div className="mt-4 pt-3 border-t border-gray-800">
-                    <h4 className="text-xs font-medium text-gray-500 mb-2">
-                      Backlinks ({backlinks.length})
-                    </h4>
-                    <div className="space-y-1">
-                      {backlinks.map((bl) => (
-                        <button
-                          key={bl.path}
-                          onClick={() =>
-                            handleNodeClick({ id: bl.path })
-                          }
-                          className="flex items-center gap-1.5 w-full text-left px-2 py-1 rounded text-xs text-gray-400 hover:text-accent hover:bg-gray-850 transition-colors"
-                        >
-                          <ChevronRight className="w-3 h-3 shrink-0" />
-                          <span className="truncate">{bl.title}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
+        </aside>
       )}
     </div>
   );

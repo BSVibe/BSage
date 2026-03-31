@@ -1,22 +1,22 @@
 /** Event type display labels and colors. */
 export const EVENT_COLORS: Record<string, string> = {
-  plugin_run_start: "bg-blue-500",
-  plugin_run_complete: "bg-blue-600",
-  plugin_run_error: "bg-red-500",
-  skill_run_start: "bg-accent",
+  plugin_run_start: "bg-secondary",
+  plugin_run_complete: "bg-secondary-container",
+  plugin_run_error: "bg-error",
+  skill_run_start: "bg-accent-light",
   skill_gather_complete: "bg-accent-light",
   skill_llm_response: "bg-accent",
   skill_apply_complete: "bg-accent-dark",
   skill_run_complete: "bg-accent-dark",
-  skill_run_error: "bg-red-500",
-  seed_written: "bg-amber-500",
-  garden_written: "bg-amber-600",
+  skill_run_error: "bg-error",
+  seed_written: "bg-tertiary",
+  garden_written: "bg-tertiary-container",
   action_logged: "bg-gray-600",
-  trigger_fired: "bg-purple-500",
-  tool_call_start: "bg-cyan-500",
-  tool_call_complete: "bg-cyan-600",
-  input_received: "bg-indigo-500",
-  input_complete: "bg-indigo-600",
+  trigger_fired: "bg-[#a78bfa]",
+  tool_call_start: "bg-secondary",
+  tool_call_complete: "bg-secondary-container",
+  input_received: "bg-secondary",
+  input_complete: "bg-secondary-container",
 };
 
 export const EVENT_LABELS: Record<string, string> = {
@@ -40,7 +40,7 @@ export const EVENT_LABELS: Record<string, string> = {
 };
 
 export const CATEGORY_COLORS: Record<string, string> = {
-  input: "bg-blue-900/50 text-blue-300",
-  process: "bg-accent/15 text-accent-light",
-  output: "bg-orange-900/50 text-orange-300",
+  input: "bg-secondary-container/10 text-secondary",
+  process: "bg-accent-light/10 text-accent-light",
+  output: "bg-tertiary-container/10 text-tertiary",
 };

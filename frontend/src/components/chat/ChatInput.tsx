@@ -1,5 +1,5 @@
-import { Send } from "lucide-react";
 import { useCallback, useRef, useState, type KeyboardEvent } from "react";
+import { Icon } from "../common/Icon";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -39,28 +39,50 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   };
 
   return (
-    <div className="flex items-end gap-2 border-t border-gray-800 bg-gray-900 px-4 py-3">
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          handleInput();
-        }}
-        onKeyDown={handleKeyDown}
-        placeholder="Type a message... (Shift+Enter for new line)"
-        disabled={disabled}
-        rows={1}
-        className="flex-1 resize-none rounded-lg border border-gray-700 bg-gray-850 px-3 py-2 text-sm text-gray-100 outline-none focus:border-accent placeholder:text-gray-600 disabled:opacity-50 font-sans"
-      />
-      <button
-        onClick={handleSend}
-        disabled={disabled || !value.trim()}
-        aria-label="Send"
-        className="flex items-center justify-center w-9 h-9 rounded-lg bg-accent text-white hover:bg-accent-dark disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
-        <Send className="w-4 h-4" />
-      </button>
+    <div className="w-full max-w-4xl mx-auto px-6 pb-6 shrink-0">
+      <div className="glass-panel border border-outline-variant/30 rounded-xl p-2 shadow-2xl">
+        {/* Top toolbar */}
+        <div className="flex items-center gap-2 px-3 pb-2 mb-2 border-b border-white/5">
+          <div className="flex bg-surface-dim p-1 rounded-md border border-outline-variant/10">
+            <button className="px-3 py-1 text-[10px] font-bold tracking-tighter rounded bg-accent text-gray-950">CHAT</button>
+            <button className="px-3 py-1 text-[10px] font-bold tracking-tighter rounded text-gray-400 hover:text-on-surface">SEARCH</button>
+          </div>
+          <div className="h-4 w-px bg-white/10 mx-1" />
+          <div className="flex gap-2">
+            <button className="text-gray-400 hover:text-accent-light transition-colors">
+              <Icon name="attach_file" size={20} />
+            </button>
+          </div>
+        </div>
+
+        {/* Input row */}
+        <div className="flex items-end gap-3 px-3 py-1">
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              handleInput();
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="Type a message or reference [[Node]]..."
+            disabled={disabled}
+            rows={1}
+            className="flex-1 bg-transparent border-none focus:ring-0 text-sm py-2 resize-none placeholder:text-gray-400 font-sans leading-relaxed text-on-surface disabled:opacity-50"
+          />
+          <button
+            onClick={handleSend}
+            disabled={disabled || !value.trim()}
+            aria-label="Send"
+            className="mb-1 w-9 h-9 flex items-center justify-center bg-accent-light text-gray-950 rounded-lg transition-all hover:scale-105 active:scale-95 shadow-lg shadow-accent-light/20 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Icon name="arrow_forward" size={20} />
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 flex justify-center">
+        <p className="text-[10px] text-gray-400/50 uppercase tracking-[0.2em] font-mono">End-to-end encrypted knowledge graph connection active</p>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { FileText } from "lucide-react";
+import { Icon } from "../common/Icon";
 
 interface SourceCitationProps {
   sources: string[];
@@ -24,16 +24,17 @@ export function SourceCitation({ sources, onNavigate }: SourceCitationProps) {
   if (sources.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-gray-800/50">
-      <span className="text-[10px] text-gray-500 leading-5">Sources:</span>
+    <div className="flex flex-wrap gap-4 mt-6 pt-4 border-t border-outline-variant/10">
       {sources.map((source) => (
         <button
           key={source}
           onClick={() => onNavigate?.(source)}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-accent/15 text-accent border border-accent/20 hover:bg-accent/25 transition-colors"
+          className="flex items-center gap-1.5 group"
         >
-          <FileText className="w-2.5 h-2.5" />
-          {source}
+          <Icon name="description" className="text-gray-400 text-xs" size={14} />
+          <span className="font-mono text-[11px] text-gray-400 group-hover:text-accent-light transition-colors">
+            {source}
+          </span>
         </button>
       ))}
     </div>

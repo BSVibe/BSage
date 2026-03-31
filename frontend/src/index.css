@@ -1,60 +1,98 @@
 @import "tailwindcss";
 
-/* ── BSVibe Design System tokens ── */
+/* ── BSage Stitch Design System tokens ── */
 @theme {
   --color-gray-950: #0a0b0f;
-  --color-gray-900: #111218;
-  --color-gray-850: #181926;
-  --color-gray-800: #1e2033;
-  --color-gray-700: #2a2d42;
-  --color-gray-600: #3d4160;
+  --color-gray-900: #121317;
+  --color-gray-850: #1a1b20;
+  --color-gray-800: #1f1f24;
+  --color-gray-700: #292a2e;
+  --color-gray-600: #343439;
   --color-gray-500: #5a5f7d;
-  --color-gray-400: #8187a8;
-  --color-gray-300: #a8adc6;
-  --color-gray-100: #e4e6ee;
+  --color-gray-400: #86948a;
+  --color-gray-300: #bbcabf;
+  --color-gray-100: #e3e2e8;
   --color-gray-50: #f2f3f7;
 
   --color-accent: #10b981;
-  --color-accent-light: #34d399;
-  --color-accent-dark: #059669;
+  --color-accent-light: #4edea3;
+  --color-accent-dark: #006c49;
+
+  --color-secondary: #adc6ff;
+  --color-secondary-container: #0566d9;
+  --color-tertiary: #ffb95f;
+  --color-tertiary-container: #e29100;
+
+  --color-surface: #121317;
+  --color-surface-dim: #0a0b0f;
+  --color-surface-container: #1f1f24;
+  --color-surface-container-low: #1a1b20;
+  --color-surface-container-high: #292a2e;
+  --color-surface-container-highest: #343439;
+
+  --color-outline: #86948a;
+  --color-outline-variant: #3c4a42;
+
+  --color-on-surface: #e3e2e8;
+  --color-on-surface-variant: #bbcabf;
+
+  --color-error: #ffb4ab;
+  --color-error-container: #93000a;
 
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-headline: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
 }
 
 :root {
   --color-accent-rgb: 16 185 129;
 }
 
+/* ── Material Symbols ── */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
 /* ── Custom scrollbar ── */
 .scrollbar-thin::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
 }
 .scrollbar-thin::-webkit-scrollbar-track {
   background: transparent;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: #2a2d42;
-  border-radius: 3px;
+  background: #3c4a42;
+  border-radius: 10px;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: #3d4160;
+  background: #4edea3;
 }
+
+/* ── Glass panel effect ── */
+.glass-panel {
+  background: rgba(52, 52, 57, 0.6);
+  backdrop-filter: blur(20px);
+}
+
+/* ── Node glow effects for graph ── */
+.node-glow-primary { filter: drop-shadow(0 0 8px rgba(78, 222, 163, 0.4)); }
+.node-glow-secondary { filter: drop-shadow(0 0 8px rgba(173, 198, 255, 0.4)); }
+.node-glow-tertiary { filter: drop-shadow(0 0 8px rgba(255, 185, 95, 0.4)); }
 
 /* ── Markdown prose inside chat bubbles ── */
 .prose pre {
   border-radius: 8px;
   overflow-x: auto;
-  background: #111218;
+  background: #1a1b20;
 }
 .prose code:not(pre code) {
-  background: #1e2033;
-  color: #34d399;
+  background: #292a2e;
+  color: #4edea3;
   padding: 0.1em 0.3em;
   border-radius: 4px;
   font-size: 0.875em;
@@ -63,14 +101,14 @@
 
 /* ── Obsidian-style wikilinks (emerald) ── */
 .wikilink {
-  color: #10b981;
+  color: #4edea3;
   text-decoration: none;
-  border-bottom: 1px dashed #10b981;
+  border-bottom: 1px dashed #4edea3;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
 }
 .wikilink:hover {
-  color: #34d399;
+  color: #6ffbbe;
   border-bottom-style: solid;
 }
 .wikilink.unresolved {
@@ -129,16 +167,20 @@
   align-items: center;
   gap: 2px;
   padding: 1px 8px;
-  border-radius: 9999px;
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
+  border-radius: 4px;
+  background: rgba(78, 222, 163, 0.1);
+  color: #4edea3;
   font-size: 0.75rem;
   font-weight: 500;
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  border: 1px solid rgba(78, 222, 163, 0.2);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 .wikilink-pill:hover {
-  background: rgba(16, 185, 129, 0.25);
-  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(78, 222, 163, 0.2);
+  border-color: rgba(78, 222, 163, 0.3);
 }
+
+/* ── No-scrollbar utility ── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
