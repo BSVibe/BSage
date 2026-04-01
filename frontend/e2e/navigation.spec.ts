@@ -14,7 +14,7 @@ test.describe("Sidebar navigation", () => {
 
   test("shows all navigation links", async ({ page }) => {
     await page.goto("/");
-    const navLabels = ["Current Chat", "Knowledge Base", "Dashboard", "Plugins", "Vault Browser", "Settings"];
+    const navLabels = ["Current Chat", "Knowledge Base", "Vault Browser", "Plugins", "Settings"];
     for (const label of navLabels) {
       await expect(page.getByRole("link", { name: label })).toBeVisible();
     }

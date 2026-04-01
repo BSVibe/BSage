@@ -6,9 +6,8 @@ import { Icon } from "../common/Icon";
 const NAV_ITEMS = [
   { hash: "#/", icon: "chat_bubble", label: "Current Chat" },
   { hash: "#/graph", icon: "hub", label: "Knowledge Base" },
-  { hash: "#/dashboard", icon: "dashboard", label: "Dashboard" },
-  { hash: "#/plugins", icon: "extension", label: "Plugins" },
   { hash: "#/vault", icon: "folder_open", label: "Vault Browser" },
+  { hash: "#/plugins", icon: "extension", label: "Plugins" },
   { hash: "#/settings", icon: "settings", label: "Settings" },
 ];
 
