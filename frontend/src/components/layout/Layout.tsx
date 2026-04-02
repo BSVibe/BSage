@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ConnectionState } from "../../api/websocket";
+import { HelpButton } from "../help/HelpButton";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 
@@ -18,6 +19,7 @@ export function Layout({ children, currentHash, connectionState, pendingApproval
         <Header connectionState={connectionState} pendingApprovals={pendingApprovals} />
         <main className="flex-1 overflow-hidden bg-gray-900">{children}</main>
       </div>
+      <HelpButton />
     </div>
   );
 }
