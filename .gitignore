@@ -44,3 +44,4 @@ docs/internal
 
 # Devcontainer local overrides (git worktree mount)
 docker-compose.override.yml
+.env.production
