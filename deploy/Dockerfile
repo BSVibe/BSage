@@ -22,7 +22,7 @@ RUN uv pip install --system --no-cache .
 
 # Build frontend
 COPY frontend/ ./frontend/
-RUN cd frontend && npm ci && npm run build
+RUN npm install -g pnpm && cd frontend && pnpm install --frozen-lockfile && pnpm build
 
 ENV PYTHONPATH=/app
 
