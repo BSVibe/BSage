@@ -30,6 +30,7 @@ services:
       TMP_DIR: /app/tmp
       CREDENTIALS_DIR: /app/.credentials
       SAFE_MODE: ${SAFE_MODE:-true}
+      CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:5173"]}'
       GATEWAY_HOST: "0.0.0.0"
       GATEWAY_PORT: "8000"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
