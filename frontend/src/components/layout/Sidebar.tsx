@@ -11,6 +11,8 @@ const NAV_ITEMS = [
 
 interface SidebarProps {
   currentHash: string;
+  isOpen: boolean;
+  onClose: () => void;
 }
 
 /** Extract email from stored BSVibe user session. */
@@ -25,13 +27,21 @@ function extractEmail(): string | null {
   }
 }
 
-export function Sidebar({ currentHash }: SidebarProps) {
+export function Sidebar({ currentHash, isOpen, onClose }: SidebarProps) {
   const active = currentHash || "#/";
   const { signOut } = useAuth();
   const userEmail = extractEmail();
 
   return (
-      <aside className="flex flex-col h-screen w-64 bg-surface-dim border-r border-white/5 shrink-0">
+    <>
+      {/* Backdrop - mobile only */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={onClose}
+        />
+      )}
+      <aside className={`fixed left-0 top-0 flex flex-col h-screen w-64 bg-surface-dim border-r border-white/5 z-50 transform transition-transform duration-200 ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:z-auto md:shrink-0`}>
         {/* Logo */}
         <div className="flex items-center gap-3 px-6 py-5 mb-2">
           <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center">
@@ -62,6 +72,7 @@ export function Sidebar({ currentHash }: SidebarProps) {
               <a
                 key={hash}
                 href={hash}
+                onClick={onClose}
                 className={`flex items-center gap-3 px-3 py-2 rounded-md text-xs font-medium transition-all ${
                   isActive
                     ? "bg-accent-light/10 text-accent-light translate-x-0.5"
@@ -91,5 +102,6 @@ export function Sidebar({ currentHash }: SidebarProps) {
           </button>
         </div>
       </aside>
+    </>
   );
 }
