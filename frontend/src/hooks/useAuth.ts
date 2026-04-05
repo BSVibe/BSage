@@ -37,13 +37,13 @@ export function useAuth(): AuthState {
       return;
     }
 
-    // 3. Silent SSO check
-    auth.checkSession().then((ssoUser) => {
-      if (ssoUser) {
-        setToken(ssoUser.accessToken);
-      }
-      setLoading(false);
-    });
+    // 3. Silent SSO check (redirect-based)
+    const result = auth.checkSession();
+    if (result === 'redirect') return; // page is navigating away
+    if (result) {
+      setToken(result.accessToken);
+    }
+    setLoading(false);
   }, []);
 
   const signOut = useCallback(() => {
