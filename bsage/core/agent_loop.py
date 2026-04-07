@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from bsage.core.plugin_loader import PluginMeta
     from bsage.core.runtime_config import RuntimeConfig
     from bsage.core.skill_loader import SkillMeta
+    from bsage.garden.ingest_compiler import IngestCompiler
     from bsage.garden.retriever import VaultRetriever
 
 logger = structlog.get_logger(__name__)
@@ -58,6 +59,7 @@ class AgentLoop:
         retriever: VaultRetriever | None = None,
         scheduler_adapter: SchedulerInterface | None = None,
         graph_store: GraphInterface | None = None,
+        ingest_compiler: IngestCompiler | None = None,
     ) -> None:
         self._registry = registry
         self._runner = runner
@@ -71,6 +73,7 @@ class AgentLoop:
         self._retriever = retriever
         self._scheduler_adapter = scheduler_adapter
         self._graph_store = graph_store
+        self._ingest_compiler = ingest_compiler
 
     # ------------------------------------------------------------------
     # Public API
@@ -111,6 +114,17 @@ class AgentLoop:
         # 1b. Refine and write to seeds
         refined = await self._refine_seed(plugin_name, raw_data)
         await self._garden_writer.write_seed(plugin_name, refined)
+
+        # 1c. Compile seed into garden notes (Karpathy-style ingest-time compilation)
+        if self._ingest_compiler:
+            compile_result = await self._ingest_compiler.compile(
+                seed_content=json.dumps(refined, default=str, ensure_ascii=False),
+                seed_source=plugin_name,
+            )
+            await self._garden_writer.write_action(
+                "ingest-compiler",
+                f"updated={compile_result.notes_updated} created={compile_result.notes_created}",
+            )
 
         # 2. Run deterministic on_input-triggered plugins/skills
         triggered = self._find_triggered(plugin_name)
