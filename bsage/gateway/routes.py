@@ -656,6 +656,57 @@ def create_routes(state: AppState) -> APIRouter:
 
         return SearchResponse(results=results)
 
+    # -- Vault lint ----------------------------------------------------------
+
+    @protected.post("/vault/lint")
+    async def run_vault_lint(
+        stale_days: int = Query(default=90, ge=1, description="Days threshold for stale check"),
+    ) -> dict[str, Any]:
+        """Run a comprehensive vault health check."""
+        from bsage.garden.vault_linter import VaultLinter
+
+        linter = VaultLinter(
+            vault=state.vault,
+            garden_writer=state.garden_writer,
+            graph_store=state.graph_store,
+            ontology=state.ontology,
+            stale_days=stale_days,
+        )
+        report = await linter.lint()
+        return {
+            "total_notes_scanned": report.total_notes_scanned,
+            "issues_count": len(report.issues),
+            "issues": [
+                {
+                    "check": i.check,
+                    "severity": i.severity,
+                    "path": i.path,
+                    "description": i.description,
+                }
+                for i in report.issues
+            ],
+            "timestamp": report.timestamp,
+        }
+
+    # -- Knowledge catalog ---------------------------------------------------
+
+    @protected.get("/knowledge/catalog")
+    async def knowledge_catalog() -> dict[str, Any]:
+        """Return the auto-generated vault catalog grouped by note type."""
+        summaries = await state.index_reader.get_all_summaries()
+        by_type: dict[str, list[dict[str, Any]]] = {}
+        for s in summaries:
+            key = s.note_type or "uncategorized"
+            by_type.setdefault(key, []).append(
+                {
+                    "title": s.title,
+                    "path": s.path,
+                    "tags": s.tags,
+                    "captured_at": s.captured_at,
+                }
+            )
+        return {"total": len(summaries), "categories": by_type}
+
     # -- Knowledge write -----------------------------------------------------
 
     @protected.post(

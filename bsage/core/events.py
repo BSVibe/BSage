@@ -49,6 +49,10 @@ class EventType(Enum):
     INPUT_RECEIVED = "input_received"
     INPUT_COMPLETE = "input_complete"
 
+    # Ingest compiler
+    INGEST_COMPILE_START = "ingest_compile_start"
+    INGEST_COMPILE_COMPLETE = "ingest_compile_complete"
+
     # Credentials
     CREDENTIAL_SETUP_REQUIRED = "credential_setup_required"
 

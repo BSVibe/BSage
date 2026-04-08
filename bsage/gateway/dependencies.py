@@ -28,6 +28,7 @@ from bsage.garden.file_index_reader import FileIndexReader
 from bsage.garden.graph_extractor import GraphExtractor
 from bsage.garden.graph_retriever import GraphRetriever
 from bsage.garden.graph_store import GraphStore
+from bsage.garden.ingest_compiler import IngestCompiler
 from bsage.garden.llm_extractor import LLMExtractor
 from bsage.garden.ontology import OntologyRegistry
 from bsage.garden.retriever import VaultRetriever
@@ -120,14 +121,14 @@ class AppState:
             credential_store=self.credential_store, event_bus=self.event_bus
         )
 
-        # Index reader for vault search
-        self.index_reader = FileIndexReader(vault=self.vault)
-
-        # Knowledge graph
+        # Knowledge graph + ontology (created before index_reader so it can use ontology)
         graph_db_path = settings.vault_path / ".bsage" / "graph.db"
         self.graph_store = GraphStore(graph_db_path)
         ontology_path = settings.vault_path / ".bsage" / "ontology.yaml"
         self.ontology = OntologyRegistry(ontology_path)
+
+        # Index reader for vault search (uses ontology for dynamic categories)
+        self.index_reader = FileIndexReader(vault=self.vault, ontology=self.ontology)
 
         async def _llm_extract_fn(system: str, text: str) -> str:
             return await self.llm_client.chat(
@@ -228,6 +229,17 @@ class AppState:
             skills=len(skill_registry),
         )
 
+        # Ingest compiler (Karpathy-style ingest-time compilation)
+        ingest_compiler: IngestCompiler | None = None
+        if self.settings.ingest_compile_enabled:
+            ingest_compiler = IngestCompiler(
+                garden_writer=self.garden_writer,
+                llm_client=self.llm_client,
+                retriever=self.retriever,
+                event_bus=self.event_bus,
+                max_updates=self.settings.ingest_compile_max_updates,
+            )
+
         self.agent_loop = AgentLoop(
             registry=registry,
             runner=self.runner,
@@ -240,6 +252,7 @@ class AppState:
             runtime_config=self.runtime_config,
             retriever=self.retriever,
             graph_store=self.graph_store,
+            ingest_compiler=ingest_compiler,
         )
 
         self.chat_bridge = ChatBridge(
@@ -248,6 +261,7 @@ class AppState:
             prompt_registry=self.prompt_registry,
             retriever=self.retriever,
             reply_fn=None,
+            ingest_compiler=ingest_compiler,
         )
 
         self.runtime_config.rebuild_enabled(registry, self.credential_store)

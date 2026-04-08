@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # Rate limiting
     rate_limit_per_minute: int = Field(default=60, gt=0)
 
+    # Ingest compiler
+    ingest_compile_enabled: bool = True
+    ingest_compile_max_updates: int = 10
+
     # Runtime
     safe_mode: bool = True
     disabled_entries: list[str] = []

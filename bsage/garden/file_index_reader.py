@@ -14,6 +14,7 @@ from bsage.garden.index_reader import NoteSummary
 from bsage.garden.markdown_utils import extract_frontmatter, extract_title
 
 if TYPE_CHECKING:
+    from bsage.garden.ontology import OntologyRegistry
     from bsage.garden.vault import Vault
 
 logger = structlog.get_logger(__name__)
@@ -98,14 +99,34 @@ class FileIndexReader:
     Obsidian can display these natively.
     """
 
-    def __init__(self, vault: Vault) -> None:
+    def __init__(self, vault: Vault, ontology: OntologyRegistry | None = None) -> None:
         self._vault = vault
+        self._ontology = ontology
         self._entries: dict[str, NoteSummary] = {}  # keyed by note_path
         self._loaded = False
 
     @property
     def _index_dir(self) -> Path:
         return self._vault.root / _INDEX_DIR
+
+    def _resolve_categories(self) -> list[str]:
+        """Build scan categories from ontology (dynamic) with legacy fallbacks."""
+        cats: list[str] = ["seeds"]
+        if self._ontology:
+            for _etype, meta in self._ontology.get_entity_types().items():
+                folder = meta.get("folder", "").rstrip("/")
+                if folder:
+                    cats.append(folder)
+        else:
+            # Fallback: scan vault root for directories that look like gardens
+            for child in sorted(self._vault.root.iterdir()):
+                if child.is_dir() and not child.name.startswith((".", "_")):
+                    name = child.name
+                    if name not in ("seeds", "actions", "tmp", "node_modules"):
+                        cats.append(name)
+        # Legacy garden/ paths for backward compatibility
+        cats.extend(["garden/idea", "garden/insight", "garden/project"])
+        return cats
 
     async def _ensure_loaded(self) -> None:
         """Load all index files from disk into memory on first access.
@@ -124,7 +145,7 @@ class FileIndexReader:
         Reads note files directly rather than parsing index markdown,
         since the table format does not preserve all fields (e.g. path).
         """
-        categories = ["seeds", "garden/idea", "garden/insight", "garden/project"]
+        categories = self._resolve_categories()
         for cat in categories:
             try:
                 await self._scan_category(cat)
@@ -281,3 +302,37 @@ class FileIndexReader:
         """Parse a note and update the index — called by IndexSubscriber."""
         summary = _note_to_summary(note_path, content)
         await self.update_entry(note_path, summary)
+
+    async def write_catalog(self) -> None:
+        """Generate a human-browsable index.md at the vault root.
+
+        Groups notes by ``note_type`` with wikilinks and tags,
+        inspired by Karpathy Wiki's browsable catalog pattern.
+        """
+        await self._ensure_loaded()
+        summaries = list(self._entries.values())
+
+        # Group by note_type
+        by_type: dict[str, list[NoteSummary]] = {}
+        for s in summaries:
+            key = s.note_type or "uncategorized"
+            by_type.setdefault(key, []).append(s)
+
+        lines = ["# Knowledge Index\n"]
+        lines.append(f"*Auto-generated. {len(summaries)} notes.*\n")
+
+        for type_name in sorted(by_type):
+            group = by_type[type_name]
+            lines.append(f"## {type_name.title()} ({len(group)})\n")
+            for s in sorted(group, key=lambda x: x.captured_at or "0000", reverse=True):
+                tags = " ".join(f"#{t}" for t in s.tags[:3]) if s.tags else ""
+                entry = f"- [[{s.title}]]"
+                if tags:
+                    entry += f" {tags}"
+                lines.append(entry)
+            lines.append("")
+
+        content = "\n".join(lines)
+        catalog_path = self._vault.root / "index.md"
+        await asyncio.to_thread(catalog_path.write_text, content, encoding="utf-8")
+        logger.info("catalog_written", notes=len(summaries))
