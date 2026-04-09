@@ -1,68 +1,94 @@
-import { useCallback, useEffect, useState } from "react";
-import { BSVibeAuth } from "../lib/bsvibe-auth";
+import { useEffect, useState } from "react";
+
+interface User {
+  id: string;
+  email: string;
+  tenantId: string;
+  role: string;
+}
 
 const AUTH_URL = import.meta.env.VITE_AUTH_URL || "https://auth.bsvibe.dev";
 
-const auth = new BSVibeAuth({
-  authUrl: AUTH_URL,
-  callbackPath: "/auth/callback",
-});
-
-interface AuthState {
-  token: string | null;
-  loading: boolean;
-  signOut: () => void;
-  login: () => void;
-  signup: () => void;
+interface SessionResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
 }
 
-export function useAuth(): AuthState {
-  const [token, setToken] = useState<string | null>(null);
+let cachedToken: { value: string; expiresAt: number } | null = null;
+
+export async function getAccessToken(): Promise<string | null> {
+  if (cachedToken && Date.now() < cachedToken.expiresAt - 30_000) {
+    return cachedToken.value;
+  }
+  try {
+    const res = await fetch(`${AUTH_URL}/api/session`, { credentials: "include" });
+    if (!res.ok) return null;
+    const data: SessionResponse = await res.json();
+    cachedToken = {
+      value: data.access_token,
+      expiresAt: Date.now() + data.expires_in * 1000,
+    };
+    return data.access_token;
+  } catch {
+    return null;
+  }
+}
+
+export function clearTokenCache() {
+  cachedToken = null;
+}
+
+/** @deprecated Use getAccessToken() instead. Bridge for sync callers until migration completes. */
+export function getToken(): string | null {
+  return cachedToken?.value ?? null;
+}
+
+function decodeJwt(token: string): Record<string, unknown> {
+  const parts = token.split(".");
+  let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+  const pad = base64.length % 4;
+  if (pad) base64 += "=".repeat(4 - pad);
+  return JSON.parse(atob(base64));
+}
+
+export function useAuth() {
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. Check if we just came back from auth callback (tokens in hash)
-    const callbackUser = auth.handleCallback();
-    if (callbackUser) {
-      setToken(callbackUser.accessToken);
+    (async () => {
+      const token = await getAccessToken();
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+      const payload = decodeJwt(token);
+      const appMeta = payload.app_metadata as Record<string, string> | undefined;
+      setUser({
+        id: payload.sub as string,
+        email: payload.email as string,
+        tenantId: appMeta?.tenant_id ?? "",
+        role: appMeta?.role ?? "member",
+      });
       setLoading(false);
-      return;
-    }
-
-    // 2. Check local session
-    const localUser = auth.getUser();
-    if (localUser) {
-      setToken(localUser.accessToken);
-      setLoading(false);
-      return;
-    }
-
-    // 3. Silent SSO check (redirect-based)
-    const result = auth.checkSession();
-    if (result === 'redirect') return; // page is navigating away
-    if (result) {
-      setToken(result.accessToken);
-    }
-    setLoading(false);
+    })();
   }, []);
 
-  const signOut = useCallback(() => {
-    setToken(null);
-    auth.logout();
-  }, []);
+  function login() {
+    window.location.href = `${AUTH_URL}/login`;
+  }
 
-  const login = useCallback(() => {
-    auth.redirectToLogin();
-  }, []);
+  function signup() {
+    window.location.href = `${AUTH_URL}/signup`;
+  }
 
-  const signup = useCallback(() => {
-    auth.redirectToSignup();
-  }, []);
+  async function logout() {
+    await fetch(`${AUTH_URL}/api/session`, { method: "DELETE", credentials: "include" });
+    clearTokenCache();
+    setUser(null);
+    window.location.href = "https://bsvibe.dev/";
+  }
 
-  return { token, loading, signOut, login, signup };
-}
-
-/** Get current access token for API calls (can be called outside React) */
-export function getToken(): string | null {
-  return auth.getToken();
+  return { user, loading, login, signup, logout };
 }

@@ -7,7 +7,7 @@ import { Icon } from "../common/Icon";
 import { Toggle } from "../common/Toggle";
 
 export function SettingsView() {
-  const { signOut } = useAuth();
+  const { logout } = useAuth();
   const [config, setConfig] = useState<RuntimeConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -198,7 +198,7 @@ export function SettingsView() {
         <section className="border-t border-white/5 pt-6">
           <h3 className="text-sm font-medium text-gray-300 mb-3">Account</h3>
           <button
-            onClick={() => signOut()}
+            onClick={() => logout()}
             className="flex items-center gap-2 px-4 py-2 text-sm text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
           >
             <Icon name="logout" size={18} />

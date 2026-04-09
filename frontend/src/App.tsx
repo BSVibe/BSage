@@ -43,7 +43,7 @@ function RouteContent({ hash }: { hash: string }) {
 
 export default function App() {
   const hash = useHashRoute();
-  const { token, loading } = useAuth();
+  const { user, loading } = useAuth();
   const { connectionState, events, clearEvents } = useWebSocket();
   const { current: approvalRequest, respond: respondApproval, pendingCount } = useApproval();
 
@@ -55,7 +55,7 @@ export default function App() {
     );
   }
 
-  if (!token) {
+  if (!user) {
     return <LandingPage />;
   }
 

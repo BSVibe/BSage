@@ -15,22 +15,10 @@ interface SidebarProps {
   onClose: () => void;
 }
 
-/** Extract email from stored BSVibe user session. */
-function extractEmail(): string | null {
-  try {
-    const raw = localStorage.getItem("bsvibe_user");
-    if (!raw) return null;
-    const user = JSON.parse(raw);
-    return user.email ?? null;
-  } catch {
-    return null;
-  }
-}
-
 export function Sidebar({ currentHash, isOpen, onClose }: SidebarProps) {
   const active = currentHash || "#/";
-  const { signOut } = useAuth();
-  const userEmail = extractEmail();
+  const { user, logout } = useAuth();
+  const userEmail = user?.email ?? null;
 
   return (
     <>
@@ -94,7 +82,7 @@ export function Sidebar({ currentHash, isOpen, onClose }: SidebarProps) {
             </p>
           )}
           <button
-            onClick={() => signOut()}
+            onClick={() => logout()}
             className="flex items-center gap-3 px-3 py-2 text-gray-500 hover:bg-white/5 hover:text-red-400 rounded-md transition-all w-full text-xs font-medium"
           >
             <Icon name="logout" size={20} />
