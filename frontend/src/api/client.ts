@@ -12,14 +12,14 @@ import type {
   VaultTags,
   VaultTreeEntry,
 } from "./types";
-import { getToken } from "../hooks/useAuth";
+import { getAccessToken } from "../hooks/useAuth";
 
 const BASE = import.meta.env.VITE_API_URL || "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
-  const token = getToken();
+  const token = await getAccessToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
