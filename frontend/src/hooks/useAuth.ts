@@ -39,11 +39,6 @@ export function clearTokenCache() {
   cachedToken = null;
 }
 
-/** @deprecated Use getAccessToken() instead. Bridge for sync callers until migration completes. */
-export function getToken(): string | null {
-  return cachedToken?.value ?? null;
-}
-
 function decodeJwt(token: string): Record<string, unknown> {
   const parts = token.split(".");
   let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
