@@ -1,13 +1,4 @@
-"""Data models for the BSage knowledge graph (v3.1).
-
-v3.1 changes (Phase 2):
-- Bi-temporal model: valid_from/valid_to/recorded_at on relationships
-- knowledge_layer removed (was deprecated in v3.0)
-
-v3.0 changes:
-- ConfidenceLevel enum replaces float confidence values
-- Hyperedge dataclass for n-ary relationships
-"""
+"""Data models for the BSage knowledge graph."""
 
 from __future__ import annotations
 
@@ -19,6 +10,11 @@ from typing import Any
 
 def _new_id() -> str:
     return str(uuid.uuid4())
+
+
+def normalize_name(name: str) -> str:
+    """Canonical form used for entity name deduplication across backends."""
+    return name.strip().lower()
 
 
 class ConfidenceLevel(StrEnum):

@@ -171,20 +171,13 @@ export function KnowledgeGraphView() {
     setSelectedNode({ id, name: node.name || id, group: node.group || "root" });
     setNoteLoading(true);
     setNoteContent(null);
-    try {
-      const res = await api.vaultFile(id);
-      setNoteContent(res.content);
-    } catch {
-      setNoteContent(null);
-    } finally {
-      setNoteLoading(false);
-    }
-    try {
-      const bl = await api.vaultBacklinks(id);
-      setBacklinks(bl);
-    } catch {
-      setBacklinks([]);
-    }
+    const [fileRes, blRes] = await Promise.allSettled([
+      api.vaultFile(id),
+      api.vaultBacklinks(id),
+    ]);
+    setNoteContent(fileRes.status === "fulfilled" ? fileRes.value.content : null);
+    setBacklinks(blRes.status === "fulfilled" ? blRes.value : []);
+    setNoteLoading(false);
   }, []);
 
   const nodeCanvasObject = useCallback(

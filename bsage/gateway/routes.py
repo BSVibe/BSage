@@ -555,10 +555,7 @@ def create_routes(state: AppState) -> APIRouter:
             detect_communities,
         )
 
-        if hasattr(state.graph_store, "build_networkx_snapshot"):
-            graph = await state.graph_store.build_networkx_snapshot()
-        else:
-            graph = state.graph_store.to_networkx()
+        graph = await state.graph_store.to_networkx_snapshot()
         communities = detect_communities(graph, algorithm=algorithm, min_size=min_size)
         # Remap entity UUIDs → vault file paths so members match /vault/graph node IDs
         data = communities_to_graph_data(communities)
@@ -592,10 +589,7 @@ def create_routes(state: AppState) -> APIRouter:
             find_knowledge_gaps,
         )
 
-        if hasattr(state.graph_store, "build_networkx_snapshot"):
-            graph = await state.graph_store.build_networkx_snapshot()
-        else:
-            graph = state.graph_store.to_networkx()
+        graph = await state.graph_store.to_networkx_snapshot()
 
         stats = compute_graph_stats(graph)
         top_nodes = compute_centrality(graph, top_k=top_k, include_betweenness=include_betweenness)

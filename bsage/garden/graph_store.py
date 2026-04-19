@@ -1,8 +1,4 @@
-"""GraphStore — async SQLite-backed knowledge graph storage.
-
-Implements the GraphBackend ABC for backward compatibility. New code
-should use VaultBackend (NetworkX) for local deployments.
-"""
+"""GraphStore — async SQLite-backed knowledge graph storage."""
 
 from __future__ import annotations
 
@@ -23,6 +19,7 @@ from bsage.garden.graph_models import (
     GraphRelationship,
     Hyperedge,
     ProvenanceRecord,
+    normalize_name,
 )
 
 if TYPE_CHECKING:
@@ -101,11 +98,6 @@ CREATE TABLE IF NOT EXISTS source_hashes (
 """
 
 
-def _normalize(name: str) -> str:
-    """Normalize an entity name for deduplication."""
-    return name.lower().strip()
-
-
 # Columns shared by both halves of the UNION ALL in query_neighbors.
 _NEIGHBOR_COLS = (
     "r.id, r.source_id, r.target_id, r.rel_type,"
@@ -174,7 +166,7 @@ class GraphStore(GraphBackend):
 
     async def _upsert_entity_locked(self, entity: GraphEntity) -> str:
         # Caller must hold _write_lock
-        norm = _normalize(entity.name)
+        norm = normalize_name(entity.name)
         row = await self._fetchone(
             "SELECT id FROM entities WHERE name_normalized = ? AND entity_type = ?",
             (norm, entity.entity_type),
@@ -335,7 +327,7 @@ class GraphStore(GraphBackend):
         self, name: str, entity_type: str | None = None
     ) -> GraphEntity | None:
         """Look up an entity by (normalized) name and optional type."""
-        norm = _normalize(name)
+        norm = normalize_name(name)
         if entity_type:
             row = await self._fetchone(
                 "SELECT * FROM entities WHERE name_normalized = ? AND entity_type = ?",
@@ -347,7 +339,7 @@ class GraphStore(GraphBackend):
 
     async def search_entities(self, query: str, *, limit: int = 20) -> list[GraphEntity]:
         """Search entities by name substring (case-insensitive)."""
-        norm = _normalize(query)
+        norm = normalize_name(query)
         rows = await self._fetchall(
             """SELECT * FROM entities
                WHERE name_normalized LIKE '%' || ? || '%'
@@ -471,7 +463,7 @@ class GraphStore(GraphBackend):
 
         Matches by source_path or normalized entity name in a single query.
         """
-        norm = _normalize(entity_name)
+        norm = normalize_name(entity_name)
         row = await self._fetchone(
             """SELECT COUNT(*) FROM (
                    SELECT r.id FROM relationships r
@@ -488,7 +480,7 @@ class GraphStore(GraphBackend):
 
     async def count_distinct_sources(self, entity_name: str) -> int:
         """Count distinct source_path entries in provenance for an entity."""
-        norm = _normalize(entity_name)
+        norm = normalize_name(entity_name)
         row = await self._fetchone(
             """SELECT COUNT(DISTINCT p.source_path) FROM provenance p
                JOIN entities e ON e.id = p.entity_id
@@ -507,7 +499,7 @@ class GraphStore(GraphBackend):
 
     async def get_entity_updated_at(self, entity_name: str) -> str | None:
         """Return the updated_at timestamp for an entity."""
-        norm = _normalize(entity_name)
+        norm = normalize_name(entity_name)
         row = await self._fetchone(
             "SELECT updated_at FROM entities WHERE source_path = ? LIMIT 1",
             (entity_name,),
@@ -720,16 +712,16 @@ class GraphStore(GraphBackend):
     # ------------------------------------------------------------------
 
     def to_networkx(self) -> nx.MultiDiGraph:
-        """Build a NetworkX MultiDiGraph snapshot from SQLite data.
+        """Return the last built snapshot (may be stale).
 
-        Note: This loads synchronously from an internal cache built by
-        ``build_networkx_snapshot()``. Call that first if the cache is stale.
+        Callers that need fresh data should use ``to_networkx_snapshot()``
+        (async, rebuilds from SQLite).
         """
         if not hasattr(self, "_nx_cache") or self._nx_cache is None:
             self._nx_cache = nx.MultiDiGraph()
         return self._nx_cache
 
-    async def build_networkx_snapshot(self) -> nx.MultiDiGraph:
+    async def to_networkx_snapshot(self) -> nx.MultiDiGraph:
         """Build a fresh NetworkX snapshot from all SQLite data."""
         graph = nx.MultiDiGraph()
         entities = await self._fetchall("SELECT * FROM entities")

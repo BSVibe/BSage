@@ -18,6 +18,7 @@ import structlog
 
 from bsage.garden.graph_backend import GraphBackend
 from bsage.garden.graph_models import GraphEntity
+from bsage.garden.vector_store import _cosine_similarity
 
 logger = structlog.get_logger(__name__)
 
@@ -148,8 +149,10 @@ async def _graph_search(
             seen_ids.add(seed.id)
             results.append(seed)
 
-    for seed in seeds:
-        hops = await backend.multi_hop_query(seed.id, max_hops=1)
+    hop_results = await asyncio.gather(
+        *(backend.multi_hop_query(seed.id, max_hops=1) for seed in seeds)
+    )
+    for hops in hop_results:
         for _depth, ent in hops:
             if ent.id not in seen_ids:
                 seen_ids.add(ent.id)
@@ -174,9 +177,9 @@ async def _vector_search(
     scored: list[tuple[float, GraphEntity]] = []
     for node_id, attrs in graph.nodes(data=True):
         emb = attrs.get("properties", {}).get("embedding")
-        if not emb or not isinstance(emb, list):
+        if not emb or not isinstance(emb, list) or len(emb) != len(q_vec):
             continue
-        sim = _cosine(q_vec, emb)
+        sim = _cosine_similarity(q_vec, emb)
         ent = GraphEntity(
             id=node_id,
             name=attrs.get("name", ""),
@@ -190,17 +193,6 @@ async def _vector_search(
 
     scored.sort(key=lambda x: -x[0])
     return [e for _, e in scored[:limit]]
-
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    if len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (na * nb)
 
 
 async def hybrid_search(

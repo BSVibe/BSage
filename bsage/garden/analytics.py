@@ -91,7 +91,7 @@ def compute_centrality(
     # PageRank — prefer numpy-free pure-Python implementation when numpy missing
     try:
         pr = _pagerank_pure(simple, alpha=0.85, max_iter=100)
-    except (nx.PowerIterationFailedConvergence, nx.NetworkXError, Exception):
+    except nx.NetworkXError:
         pr = dict.fromkeys(graph.nodes, 1.0 / max(graph.number_of_nodes(), 1))
 
     betweenness: dict[str, float] = {}

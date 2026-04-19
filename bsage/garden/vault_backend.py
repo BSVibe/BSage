@@ -24,16 +24,13 @@ from bsage.garden.graph_models import (
     GraphRelationship,
     Hyperedge,
     ProvenanceRecord,
+    normalize_name,
 )
 from bsage.garden.storage import StorageBackend
 
 logger = structlog.get_logger(__name__)
 
 _CACHE_PATH = ".bsage/graph_cache.json"
-
-
-def _normalize(name: str) -> str:
-    return name.strip().lower()
 
 
 def _entity_from_node(node_id: str, attrs: dict[str, Any]) -> GraphEntity:
@@ -120,18 +117,17 @@ class VaultBackend(GraphBackend):
     def _rebuild_name_index(self) -> None:
         self._name_index.clear()
         for node_id, attrs in self._G.nodes(data=True):
-            key = (_normalize(attrs.get("name", "")), attrs.get("entity_type", ""))
+            key = (normalize_name(attrs.get("name", "")), attrs.get("entity_type", ""))
             self._name_index[key] = node_id
 
     # -- Entity / Relationship CRUD ---------------------------------------
 
     async def upsert_entity(self, entity: GraphEntity) -> str:
         async with self._lock:
-            key = (_normalize(entity.name), entity.entity_type)
+            key = (normalize_name(entity.name), entity.entity_type)
             existing_id = self._name_index.get(key)
 
             if existing_id:
-                # Update existing node attributes
                 self._G.nodes[existing_id].update(
                     {
                         "name": entity.name,
@@ -213,7 +209,7 @@ class VaultBackend(GraphBackend):
 
             for node_id in nodes_to_remove:
                 attrs = self._G.nodes[node_id]
-                key = (_normalize(attrs.get("name", "")), attrs.get("entity_type", ""))
+                key = (normalize_name(attrs.get("name", "")), attrs.get("entity_type", ""))
                 self._name_index.pop(key, None)
                 self._G.remove_node(node_id)
                 deleted += 1
@@ -236,22 +232,22 @@ class VaultBackend(GraphBackend):
         self, name: str, entity_type: str | None = None
     ) -> GraphEntity | None:
         if entity_type:
-            node_id = self._name_index.get((_normalize(name), entity_type))
+            node_id = self._name_index.get((normalize_name(name), entity_type))
             if node_id and self._G.has_node(node_id):
                 return _entity_from_node(node_id, self._G.nodes[node_id])
             return None
 
-        norm = _normalize(name)
+        norm = normalize_name(name)
         for (n, _t), node_id in self._name_index.items():
             if n == norm and self._G.has_node(node_id):
                 return _entity_from_node(node_id, self._G.nodes[node_id])
         return None
 
     async def search_entities(self, query: str, *, limit: int = 20) -> list[GraphEntity]:
-        norm_q = _normalize(query)
+        norm_q = normalize_name(query)
         results = []
         for node_id, attrs in self._G.nodes(data=True):
-            if norm_q in _normalize(attrs.get("name", "")):
+            if norm_q in normalize_name(attrs.get("name", "")):
                 results.append(_entity_from_node(node_id, attrs))
                 if len(results) >= limit:
                     break

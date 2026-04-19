@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import structlog
 
 from bsage.garden.graph_backend import GraphBackend
-from bsage.garden.graph_models import GraphEntity
+from bsage.garden.graph_models import GraphEntity, normalize_name
 
 logger = structlog.get_logger(__name__)
 
@@ -63,7 +63,7 @@ async def llm_check_duplicate(
     """
     # Fast path: already-identical normalized names
     if (
-        candidate_a.name.strip().lower() == candidate_b.name.strip().lower()
+        normalize_name(candidate_a.name) == normalize_name(candidate_b.name)
         and candidate_a.entity_type == candidate_b.entity_type
     ):
         return DuplicateDecision(

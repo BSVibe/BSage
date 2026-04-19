@@ -53,21 +53,16 @@ def detect_communities(
     # Convert to undirected simple graph for community detection
     undirected = nx.Graph(graph.to_undirected())
 
+    partition: dict[str, int] = {}
     if algorithm == "label_propagation":
         raw_communities = nx.community.label_propagation_communities(undirected)
-        partition: dict[str, int] = {}
-        for idx, comm in enumerate(raw_communities):
-            for node in comm:
-                partition[node] = idx
     else:
-        # Louvain (default)
-        partition = nx.community.louvain_communities(undirected, resolution=resolution, seed=42)
-        # louvain_communities returns list of sets, convert to node->id mapping
-        node_to_comm: dict[str, int] = {}
-        for idx, comm_set in enumerate(partition):
-            for node in comm_set:
-                node_to_comm[node] = idx
-        partition = node_to_comm
+        raw_communities = nx.community.louvain_communities(
+            undirected, resolution=resolution, seed=42
+        )
+    for idx, comm in enumerate(raw_communities):
+        for node in comm:
+            partition[node] = idx
 
     # Group nodes by community
     comm_members: dict[int, list[str]] = {}

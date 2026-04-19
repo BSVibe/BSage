@@ -123,6 +123,15 @@ class GraphBackend(ABC):
     def to_networkx(self) -> nx.MultiDiGraph:
         """Return the graph as a NetworkX MultiDiGraph for analysis."""
 
+    async def to_networkx_snapshot(self) -> nx.MultiDiGraph:
+        """Return a fresh NetworkX snapshot, awaitable for IO-backed backends.
+
+        Default implementation delegates to the synchronous ``to_networkx()``
+        for in-memory backends (VaultBackend). Persistent backends
+        (GraphStore) override this to rebuild from storage.
+        """
+        return self.to_networkx()
+
     # -- Temporal queries -------------------------------------------------
 
     async def query_valid_at(

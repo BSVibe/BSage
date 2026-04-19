@@ -42,14 +42,11 @@ function RouteContent({ hash }: { hash: string }) {
 }
 
 export default function App() {
-  // OAuth callback runs once before any auth check. If a token is found in
-  // the URL fragment, it is persisted to localStorage and we redirect home
-  // so useAuth picks it up on the next mount.
-  if (typeof window !== "undefined" && window.location.hash.startsWith("#/auth/callback")) {
-    if (consumeAuthCallback()) {
+  useEffect(() => {
+    if (window.location.hash.startsWith("#/auth/callback") && consumeAuthCallback()) {
       window.location.replace(window.location.pathname + "#/");
     }
-  }
+  }, []);
 
   const hash = useHashRoute();
   const { user, loading } = useAuth();
