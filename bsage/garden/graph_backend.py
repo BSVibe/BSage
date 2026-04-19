@@ -123,6 +123,40 @@ class GraphBackend(ABC):
     def to_networkx(self) -> nx.MultiDiGraph:
         """Return the graph as a NetworkX MultiDiGraph for analysis."""
 
+    # -- Temporal queries -------------------------------------------------
+
+    async def query_valid_at(
+        self, entity_id: str, at_date: str, *, rel_type: str | None = None
+    ) -> list[tuple[GraphRelationship, GraphEntity]]:
+        """Return relationships valid at a specific date.
+
+        Filters neighbors by ``valid_from <= at_date`` and
+        ``valid_to is None or valid_to > at_date``.
+        Default implementation filters ``query_neighbors`` results.
+        """
+        neighbors = await self.query_neighbors(entity_id, rel_type=rel_type)
+        results = []
+        for rel, ent in neighbors:
+            if rel.valid_from and rel.valid_from > at_date:
+                continue
+            if rel.valid_to and rel.valid_to <= at_date:
+                continue
+            results.append((rel, ent))
+        return results
+
+    async def invalidate_relationship(self, rel_id: str, invalid_at: str) -> bool:
+        """Mark a relationship as no longer valid by setting valid_to.
+
+        Returns True if the relationship was found and updated.
+        Default implementation searches edges by key.
+        """
+        graph = self.to_networkx()
+        for _u, _v, key, data in graph.edges(keys=True, data=True):
+            if key == rel_id:
+                data["valid_to"] = invalid_at
+                return True
+        return False
+
     # -- Hyperedge --------------------------------------------------------
 
     @abstractmethod

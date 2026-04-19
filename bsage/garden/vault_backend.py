@@ -61,6 +61,9 @@ def _rel_from_edge(u: str, v: str, key: str, attrs: dict[str, Any]) -> GraphRela
         confidence=attrs.get("confidence", ConfidenceLevel.EXTRACTED),
         weight=attrs.get("weight", 0.5),
         edge_type=attrs.get("edge_type", "weak"),
+        valid_from=attrs.get("valid_from"),
+        valid_to=attrs.get("valid_to"),
+        recorded_at=attrs.get("recorded_at"),
     )
 
 
@@ -157,6 +160,7 @@ class VaultBackend(GraphBackend):
             return entity.id
 
     async def upsert_relationship(self, rel: GraphRelationship) -> str:
+        recorded = rel.recorded_at or datetime.now(UTC).isoformat()
         async with self._lock:
             # Check for existing edge with same (source, target, rel_type)
             if self._G.has_edge(rel.source_id, rel.target_id):
@@ -169,6 +173,9 @@ class VaultBackend(GraphBackend):
                                 "confidence": rel.confidence,
                                 "weight": rel.weight,
                                 "edge_type": rel.edge_type,
+                                "valid_from": rel.valid_from,
+                                "valid_to": rel.valid_to,
+                                "recorded_at": recorded,
                             }
                         )
                         return key
@@ -183,6 +190,9 @@ class VaultBackend(GraphBackend):
                 confidence=rel.confidence,
                 weight=rel.weight,
                 edge_type=rel.edge_type,
+                valid_from=rel.valid_from,
+                valid_to=rel.valid_to,
+                recorded_at=recorded,
             )
             return rel.id
 

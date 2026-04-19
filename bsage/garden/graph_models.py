@@ -1,9 +1,12 @@
-"""Data models for the BSage knowledge graph (v3.0).
+"""Data models for the BSage knowledge graph (v3.1).
+
+v3.1 changes (Phase 2):
+- Bi-temporal model: valid_from/valid_to/recorded_at on relationships
+- knowledge_layer removed (was deprecated in v3.0)
 
 v3.0 changes:
 - ConfidenceLevel enum replaces float confidence values
 - Hyperedge dataclass for n-ary relationships
-- knowledge_layer deprecated (replaced by bi-temporal in Phase 2)
 """
 
 from __future__ import annotations
@@ -80,6 +83,10 @@ class GraphEntity:
 class GraphRelationship:
     """An edge in the knowledge graph.
 
+    Bi-temporal model (v3.1):
+        valid_from/valid_to: When this fact is true in the real world.
+        recorded_at: When this fact was recorded in the system.
+
     Attributes:
         id: Unique identifier.
         source_id: Entity ID of the source node.
@@ -90,6 +97,9 @@ class GraphRelationship:
         confidence: Extraction confidence level.
         weight: Edge importance (from ontology default_weight or calculated).
         edge_type: Strong (frontmatter) or weak (body mention).
+        valid_from: ISO date when this fact became true (None = unknown).
+        valid_to: ISO date when this fact stopped being true (None = still valid).
+        recorded_at: ISO timestamp when this fact was recorded in the system.
     """
 
     source_id: str
@@ -101,6 +111,9 @@ class GraphRelationship:
     confidence: str = ConfidenceLevel.EXTRACTED
     weight: float = 0.5
     edge_type: str = "weak"
+    valid_from: str | None = None
+    valid_to: str | None = None
+    recorded_at: str | None = None
 
 
 @dataclass

@@ -118,6 +118,12 @@ class GraphExtractor:
         if self._ontology and not fm.get("knowledge_layer"):
             knowledge_layer = self._ontology.get_knowledge_layer(fm_type)
 
+        # Bi-temporal: extract valid_from/valid_to from frontmatter
+        note_valid_from = str(fm["valid_from"]) if fm.get("valid_from") else None
+        note_valid_to = str(fm["valid_to"]) if fm.get("valid_to") else None
+        if note_valid_to == "present":
+            note_valid_to = None  # "present" means still valid
+
         # 1. Note entity — use frontmatter type directly as entity_type (v2.2: no mapping)
         note_name = fm.get("title") or _slug_from_path(rel_path)
         note_entity = GraphEntity(
@@ -164,6 +170,8 @@ class GraphExtractor:
                         source_path=rel_path,
                         weight=self._get_relation_weight(predicate),
                         edge_type="strong",
+                        valid_from=note_valid_from,
+                        valid_to=note_valid_to,
                     )
                 )
                 # Link fact note to subject

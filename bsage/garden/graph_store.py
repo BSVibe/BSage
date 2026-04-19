@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS relationships (
     confidence TEXT NOT NULL DEFAULT 'extracted',
     weight REAL NOT NULL DEFAULT 0.5,
     edge_type TEXT NOT NULL DEFAULT 'weak',
+    valid_from TEXT DEFAULT NULL,
+    valid_to TEXT DEFAULT NULL,
+    recorded_at TEXT DEFAULT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (source_id) REFERENCES entities(id) ON DELETE CASCADE,
     FOREIGN KEY (target_id) REFERENCES entities(id) ON DELETE CASCADE
@@ -242,8 +245,8 @@ class GraphStore(GraphBackend):
         await self._conn.execute(
             """INSERT INTO relationships
                (id, source_id, target_id, rel_type, source_path, properties,
-                confidence, weight, edge_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                confidence, weight, edge_type, valid_from, valid_to, recorded_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 rel.id,
                 rel.source_id,
@@ -254,6 +257,9 @@ class GraphStore(GraphBackend):
                 rel.confidence,
                 rel.weight,
                 rel.edge_type,
+                rel.valid_from,
+                rel.valid_to,
+                rel.recorded_at,
             ),
         )
         return rel.id
@@ -753,6 +759,9 @@ class GraphStore(GraphBackend):
                 confidence=row[6],
                 weight=row[7],
                 edge_type=row[8],
+                valid_from=row[9] if len(row) > 9 else None,
+                valid_to=row[10] if len(row) > 10 else None,
+                recorded_at=row[11] if len(row) > 11 else None,
             )
         self._nx_cache = graph
         return graph
