@@ -566,6 +566,38 @@ def create_routes(state: AppState) -> APIRouter:
             "total": len(communities),
         }
 
+    @protected.get("/vault/analytics")
+    async def vault_analytics(
+        top_k: int = Query(default=20, ge=1, le=100),
+        include_betweenness: bool = Query(default=False),
+    ) -> dict[str, Any]:
+        """Return graph analytics: centrality, stats, god nodes, gaps."""
+        from dataclasses import asdict
+
+        from bsage.garden.analytics import (
+            compute_centrality,
+            compute_graph_stats,
+            find_god_nodes,
+            find_knowledge_gaps,
+        )
+
+        if hasattr(state.graph_store, "build_networkx_snapshot"):
+            graph = await state.graph_store.build_networkx_snapshot()
+        else:
+            graph = state.graph_store.to_networkx()
+
+        stats = compute_graph_stats(graph)
+        top_nodes = compute_centrality(graph, top_k=top_k, include_betweenness=include_betweenness)
+        god_nodes = find_god_nodes(graph, top_k=10)
+        gaps = find_knowledge_gaps(graph)
+
+        return {
+            "stats": asdict(stats),
+            "centrality": [asdict(n) for n in top_nodes],
+            "god_nodes": [asdict(n) for n in god_nodes],
+            "gaps": gaps,
+        }
+
     @protected.get("/vault/tags")
     async def vault_tags(
         max_files: int = Query(default=500, ge=1, le=2000, description="Max files to scan"),
