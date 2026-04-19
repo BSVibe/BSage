@@ -1,4 +1,8 @@
-"""GraphStore — async SQLite-backed knowledge graph storage."""
+"""GraphStore — async SQLite-backed knowledge graph storage.
+
+Implements the GraphBackend ABC for backward compatibility. New code
+should use VaultBackend (NetworkX) for local deployments.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +14,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import aiosqlite
+import networkx as nx
 import structlog
 
-from bsage.garden.graph_models import GraphEntity, GraphRelationship, ProvenanceRecord
+from bsage.garden.graph_backend import GraphBackend
+from bsage.garden.graph_models import (
+    GraphEntity,
+    GraphRelationship,
+    Hyperedge,
+    ProvenanceRecord,
+)
 
 if TYPE_CHECKING:
     from bsage.garden.graph_extractor import GraphExtractor
@@ -28,8 +39,8 @@ CREATE TABLE IF NOT EXISTS entities (
     entity_type TEXT NOT NULL,
     source_path TEXT NOT NULL,
     properties TEXT NOT NULL DEFAULT '{}',
-    confidence REAL NOT NULL DEFAULT 1.0,
-    knowledge_layer TEXT NOT NULL DEFAULT 'semantic',
+    confidence TEXT NOT NULL DEFAULT 'extracted',
+    knowledge_layer TEXT DEFAULT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -50,7 +61,7 @@ CREATE TABLE IF NOT EXISTS relationships (
     rel_type TEXT NOT NULL,
     source_path TEXT NOT NULL,
     properties TEXT NOT NULL DEFAULT '{}',
-    confidence REAL NOT NULL DEFAULT 1.0,
+    confidence TEXT NOT NULL DEFAULT 'extracted',
     weight REAL NOT NULL DEFAULT 0.5,
     edge_type TEXT NOT NULL DEFAULT 'weak',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -68,7 +79,7 @@ CREATE TABLE IF NOT EXISTS provenance (
     entity_id TEXT NOT NULL,
     source_path TEXT NOT NULL,
     extraction_method TEXT NOT NULL,
-    confidence REAL NOT NULL DEFAULT 1.0,
+    confidence TEXT NOT NULL DEFAULT 'extracted',
     extracted_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
 );
@@ -102,7 +113,7 @@ _NEIGHBOR_COLS = (
 )
 
 
-class GraphStore:
+class GraphStore(GraphBackend):
     """Async SQLite-backed graph storage.
 
     Stores entities and relationships as a derived index over the vault.
@@ -697,3 +708,30 @@ class GraphStore:
             confidence=row[6],
             knowledge_layer=row[7],
         )
+
+    # ------------------------------------------------------------------
+    # GraphBackend — NetworkX snapshot
+    # ------------------------------------------------------------------
+
+    def to_networkx(self) -> nx.MultiDiGraph:
+        """Build a NetworkX MultiDiGraph snapshot from SQLite data.
+
+        This is an on-demand snapshot, not a live view. For live graph
+        analysis, use VaultBackend instead.
+        """
+        raise NotImplementedError(
+            "GraphStore.to_networkx() requires async data loading. "
+            "Use VaultBackend for live NetworkX graph access."
+        )
+
+    # ------------------------------------------------------------------
+    # GraphBackend — Hyperedge (stub for SQLite backend)
+    # ------------------------------------------------------------------
+
+    async def add_hyperedge(self, hyperedge: Hyperedge) -> str:
+        """Add a hyperedge. Not yet implemented for SQLite backend."""
+        raise NotImplementedError("Hyperedge support requires VaultBackend")
+
+    async def get_hyperedges(self) -> list[Hyperedge]:
+        """Get all hyperedges. Not yet implemented for SQLite backend."""
+        raise NotImplementedError("Hyperedge support requires VaultBackend")

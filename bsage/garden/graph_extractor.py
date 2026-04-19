@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from bsage.core.patterns import WIKILINK_RE
-from bsage.garden.graph_models import GraphEntity, GraphRelationship
+from bsage.garden.graph_models import ConfidenceLevel, GraphEntity, GraphRelationship
 from bsage.garden.markdown_utils import body_after_frontmatter, extract_frontmatter
 
 if TYPE_CHECKING:
@@ -64,9 +64,9 @@ def _extract_wikilink_names(items: list[Any]) -> list[str]:
 class GraphExtractor:
     """Extracts entities and relationships from vault note content.
 
-    Primary extraction is deterministic rule-based (confidence=1.0).
+    Primary extraction is deterministic rule-based (confidence=EXTRACTED).
     When an ``LLMExtractor`` is provided, also extracts from unstructured
-    body text using LLM (confidence=0.8).
+    body text using LLM (confidence=INFERRED).
 
     v2.2: Uses frontmatter type directly as entity_type (no _TYPE_MAP).
     Extracts typed relations from frontmatter keys matching ontology relation types.
@@ -112,7 +112,7 @@ class GraphExtractor:
             entity_type=fm_type,
             source_path=rel_path,
             properties={k: v for k, v in fm.items() if k in ("type", "status", "captured_at")},
-            confidence=float(fm.get("confidence", 1.0)),
+            confidence=fm.get("confidence", ConfidenceLevel.EXTRACTED),
             knowledge_layer=knowledge_layer,
         )
         entities.append(note_entity)

@@ -1,6 +1,7 @@
 """Tests for GraphExtractor — rule-based entity/relationship extraction."""
 
 from bsage.garden.graph_extractor import GraphExtractor
+from bsage.garden.graph_models import ConfidenceLevel
 
 
 def _make_note(
@@ -39,7 +40,7 @@ def test_extract_note_entity():
     assert len(note_entities) == 1
     assert note_entities[0].name == "BSage Project"
     assert note_entities[0].source_path == "garden/idea/bsage.md"
-    assert note_entities[0].confidence == 1.0
+    assert note_entities[0].confidence == ConfidenceLevel.EXTRACTED
 
 
 def test_extract_note_entity_from_filename():
