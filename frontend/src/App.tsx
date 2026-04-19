@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useApproval } from "./hooks/useApproval";
-import { useAuth } from "./hooks/useAuth";
+import { consumeAuthCallback, useAuth } from "./hooks/useAuth";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { ApprovalModal } from "./components/approval/ApprovalModal";
 import { ChatView } from "./components/chat/ChatView";
@@ -42,6 +42,15 @@ function RouteContent({ hash }: { hash: string }) {
 }
 
 export default function App() {
+  // OAuth callback runs once before any auth check. If a token is found in
+  // the URL fragment, it is persisted to localStorage and we redirect home
+  // so useAuth picks it up on the next mount.
+  if (typeof window !== "undefined" && window.location.hash.startsWith("#/auth/callback")) {
+    if (consumeAuthCallback()) {
+      window.location.replace(window.location.pathname + "#/");
+    }
+  }
+
   const hash = useHashRoute();
   const { user, loading } = useAuth();
   const { connectionState, events, clearEvents } = useWebSocket();
