@@ -99,6 +99,7 @@ export function VaultView() {
   const [viewMode, setViewMode] = useState<ViewMode>("notes");
   const [filterPaths, setFilterPaths] = useState<Set<string> | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -146,23 +147,42 @@ export function VaultView() {
     [stemLookup, tree],
   );
 
-  const handleTagSelect = useCallback(
-    (tag: string | null) => {
-      setActiveTag(tag);
-      if (!tag) {
-        setFilterPaths(null);
-        return;
+  const handleTagSelect = useCallback((tag: string | null) => {
+    setActiveTag(tag);
+    if (!tag) {
+      setFilterPaths(null);
+      return;
+    }
+    setActiveCategory(null);
+    api
+      .vaultTags()
+      .then((data) => {
+        const paths = data.tags[tag];
+        setFilterPaths(paths ? new Set(paths) : new Set());
+      })
+      .catch(() => setFilterPaths(null));
+  }, []);
+
+  const collectFilesUnder = useCallback((dir: string): Set<string> => {
+    const prefix = `${dir}/`;
+    const paths = new Set<string>();
+    for (const entry of tree) {
+      if (entry.path !== dir && !entry.path.startsWith(prefix)) continue;
+      for (const file of entry.files) {
+        paths.add(entry.path ? `${entry.path}/${file}` : file);
       }
-      api
-        .vaultTags()
-        .then((data) => {
-          const paths = data.tags[tag];
-          setFilterPaths(paths ? new Set(paths) : new Set());
-        })
-        .catch(() => setFilterPaths(null));
-    },
-    [],
-  );
+    }
+    return paths;
+  }, [tree]);
+
+  const handleCategorySelect = useCallback((category: string) => {
+    setActiveCategory((prev) => {
+      const next = prev === category ? null : category;
+      setActiveTag(null);
+      setFilterPaths(next ? collectFilesUnder(next) : null);
+      return next;
+    });
+  }, [collectFilesUnder]);
 
   const parsed = useMemo(() => {
     if (!fileContent) return null;
@@ -270,18 +290,27 @@ export function VaultView() {
 
             {/* Sidebar categories */}
             <div className="px-2 space-y-1 mb-4">
-              <button className="w-full flex items-center gap-3 bg-accent-light/10 text-accent-light border-r-2 border-accent-light px-4 py-3 font-mono text-xs uppercase tracking-widest transition-all">
-                <Icon name="psychology" size={18} />
-                Seeds
-              </button>
-              <button className="w-full flex items-center gap-3 text-on-surface/40 px-4 py-3 font-mono text-xs uppercase tracking-widest hover:text-accent-light hover:bg-surface-container-low transition-all">
-                <Icon name="local_florist" size={18} />
-                Garden
-              </button>
-              <button className="w-full flex items-center gap-3 text-on-surface/40 px-4 py-3 font-mono text-xs uppercase tracking-widest hover:text-accent-light hover:bg-surface-container-low transition-all">
-                <Icon name="bolt" size={18} />
-                Actions
-              </button>
+              {[
+                { id: "seeds", label: "Seeds", icon: "psychology" },
+                { id: "garden", label: "Garden", icon: "local_florist" },
+                { id: "actions", label: "Actions", icon: "bolt" },
+              ].map((cat) => {
+                const active = activeCategory === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => handleCategorySelect(cat.id)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 font-mono text-xs uppercase tracking-widest transition-all ${
+                      active
+                        ? "bg-accent-light/10 text-accent-light border-r-2 border-accent-light"
+                        : "text-on-surface/40 hover:text-accent-light hover:bg-surface-container-low"
+                    }`}
+                  >
+                    <Icon name={cat.icon} size={18} />
+                    {cat.label}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Tag cloud */}
