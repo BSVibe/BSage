@@ -163,11 +163,25 @@ export function VaultView() {
       .catch(() => setFilterPaths(null));
   }, []);
 
-  const collectFilesUnder = useCallback((dir: string): Set<string> => {
-    const prefix = `${dir}/`;
+  // Category → top-level dirs it includes.
+  // "Garden" spans all entity-type folders (BSage v2.2) plus the legacy
+  // garden/ dir so the user sees everything knowledge-related in one click.
+  const categoryDirs: Record<string, string[]> = useMemo(() => ({
+    seeds: ["seeds"],
+    garden: [
+      "ideas", "insights", "projects", "people",
+      "events", "tasks", "facts", "preferences",
+      "garden",
+    ],
+    actions: ["actions"],
+  }), []);
+
+  const collectFilesUnder = useCallback((dirs: string[]): Set<string> => {
     const paths = new Set<string>();
+    const prefixes = dirs.map((d) => `${d}/`);
     for (const entry of tree) {
-      if (entry.path !== dir && !entry.path.startsWith(prefix)) continue;
+      const matches = dirs.includes(entry.path) || prefixes.some((p) => entry.path.startsWith(p));
+      if (!matches) continue;
       for (const file of entry.files) {
         paths.add(entry.path ? `${entry.path}/${file}` : file);
       }
@@ -179,10 +193,10 @@ export function VaultView() {
     setActiveCategory((prev) => {
       const next = prev === category ? null : category;
       setActiveTag(null);
-      setFilterPaths(next ? collectFilesUnder(next) : null);
+      setFilterPaths(next ? collectFilesUnder(categoryDirs[next] ?? [next]) : null);
       return next;
     });
-  }, [collectFilesUnder]);
+  }, [collectFilesUnder, categoryDirs]);
 
   const parsed = useMemo(() => {
     if (!fileContent) return null;
