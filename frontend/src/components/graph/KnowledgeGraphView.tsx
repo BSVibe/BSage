@@ -325,31 +325,14 @@ export function KnowledgeGraphView() {
             )}
           </div>
 
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {groupsInfo.map(({ group, count, label, color, icon }) => {
-              const active = activeFilters === null || activeFilters.has(group);
-              return (
-                <button
-                  key={group}
-                  onClick={() => toggleFilter(group)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                    active
-                      ? "bg-surface-container-high text-on-surface border border-white/5"
-                      : "text-gray-500 border border-transparent hover:text-gray-400"
-                  }`}
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "14px", color: active ? color : undefined, opacity: active ? 1 : 0.5 }}
-                  >
-                    {icon}
-                  </span>
-                  {label}
-                  <span className="text-[10px] opacity-60">{count}</span>
-                </button>
-              );
-            })}
-          </div>
+          {activeFilters && (
+            <button
+              onClick={() => setActiveFilters(null)}
+              className="text-[10px] font-mono uppercase tracking-widest text-gray-500 hover:text-accent-light transition-colors"
+            >
+              Show all
+            </button>
+          )}
         </div>
 
         {/* Graph canvas */}
@@ -425,15 +408,27 @@ export function KnowledgeGraphView() {
             )}
 
             {colorMode === "group"
-              ? groupsInfo.map(({ group, label, color }) => (
-                  <div key={group} className="flex items-center gap-3">
-                    <div
-                      className="w-2 h-2 rounded-full"
-                      style={{ backgroundColor: color }}
-                    />
-                    <span className="font-mono text-[9px] uppercase tracking-widest text-gray-400">{label}</span>
-                  </div>
-                ))
+              ? groupsInfo.map(({ group, count, label, color }) => {
+                  const active = activeFilters === null || activeFilters.has(group);
+                  return (
+                    <button
+                      key={group}
+                      onClick={() => toggleFilter(group)}
+                      className={`flex items-center gap-3 text-left transition-opacity ${
+                        active ? "opacity-100" : "opacity-40 hover:opacity-70"
+                      }`}
+                    >
+                      <div
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: color }}
+                      />
+                      <span className="font-mono text-[9px] uppercase tracking-widest text-gray-400">
+                        {label}
+                        <span className="text-gray-600 ml-1.5">{count}</span>
+                      </span>
+                    </button>
+                  );
+                })
               : communities.map((c) => (
                   <div key={c.id} className="flex items-center gap-3">
                     <div
