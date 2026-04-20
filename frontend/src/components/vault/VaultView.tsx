@@ -10,7 +10,6 @@ import type { VaultBacklink, VaultTreeEntry } from "../../api/types";
 import { Icon } from "../common/Icon";
 import { BacklinksPanel } from "./BacklinksPanel";
 import { DirectoryTree } from "./DirectoryTree";
-import { GraphView } from "./GraphView";
 import { SearchPanel } from "./SearchPanel";
 import { TagCloud } from "./TagCloud";
 
@@ -57,37 +56,6 @@ function buildStemLookup(tree: VaultTreeEntry[]): Map<string, string> {
   return map;
 }
 
-type ViewMode = "notes" | "graph";
-
-function ViewModeTabs({
-  current,
-  onChange,
-}: {
-  current: ViewMode;
-  onChange: (mode: ViewMode) => void;
-}) {
-  return (
-    <div className="flex items-center gap-6">
-      <button
-        onClick={() => onChange("notes")}
-        className={`text-sm font-semibold tracking-tight px-2 py-1 rounded transition-colors ${
-          current === "notes" ? "text-accent-light" : "text-on-surface/60 hover:bg-surface-container-low"
-        }`}
-      >
-        Vault Explorer
-      </button>
-      <button
-        onClick={() => onChange("graph")}
-        className={`text-sm font-semibold tracking-tight px-2 py-1 rounded transition-colors ${
-          current === "graph" ? "text-accent-light" : "text-on-surface/60 hover:bg-surface-container-low"
-        }`}
-      >
-        Graph View
-      </button>
-    </div>
-  );
-}
-
 export function VaultView() {
   const [tree, setTree] = useState<VaultTreeEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,7 +64,6 @@ export function VaultView() {
   const [fileLoading, setFileLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
   const [backlinks, setBacklinks] = useState<VaultBacklink[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>("notes");
   const [filterPaths, setFilterPaths] = useState<Set<string> | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -114,7 +81,6 @@ export function VaultView() {
     setSelectedPath(path);
     setFileLoading(true);
     setRawMode(false);
-    setViewMode("notes");
     try {
       const res = await api.vaultFile(path);
       setFileContent(res.content);
@@ -258,14 +224,6 @@ export function VaultView() {
     [resolveWikiLink, handleSelectFile],
   );
 
-  const handleGraphSelect = useCallback(
-    (path: string) => {
-      setViewMode("notes");
-      handleSelectFile(path);
-    },
-    [handleSelectFile],
-  );
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500">Loading...</div>
@@ -279,7 +237,7 @@ export function VaultView() {
     <div className="h-full flex flex-col">
       {/* Top navigation */}
       <header className="flex items-center justify-between px-6 h-14 border-b border-white/5 bg-surface shrink-0">
-        <ViewModeTabs current={viewMode} onChange={setViewMode} />
+        <h1 className="text-sm font-semibold tracking-tight text-accent-light">Vault Explorer</h1>
         <div className="flex items-center gap-3">
           {selectedPath && (
             <>
@@ -294,12 +252,7 @@ export function VaultView() {
         </div>
       </header>
 
-      {viewMode === "graph" ? (
-        <div className="flex-1 min-h-0 relative">
-          <GraphView onSelectFile={handleGraphSelect} selectedPath={selectedPath} />
-        </div>
-      ) : (
-        <div className="flex-1 min-h-0 flex">
+      <div className="flex-1 min-h-0 flex">
           {/* Left panel: file tree */}
           <div data-testid="vault-file-tree" className="w-72 shrink-0 bg-surface-container-low border-r border-outline-variant/5 flex flex-col">
             {/* Search */}
@@ -498,7 +451,6 @@ export function VaultView() {
             )}
           </div>
         </div>
-      )}
 
       {/* FAB */}
       <button className="fixed bottom-14 right-8 w-14 h-14 bg-accent-light text-gray-950 rounded-full shadow-[0_8px_24px_rgba(0,0,0,0.5)] flex items-center justify-center hover:scale-110 active:scale-95 transition-transform z-50 group">
