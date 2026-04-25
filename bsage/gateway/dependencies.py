@@ -23,6 +23,7 @@ from bsage.core.safe_mode import SafeModeGuard
 from bsage.core.scheduler import Scheduler
 from bsage.core.skill_loader import SkillLoader
 from bsage.core.skill_runner import SkillRunner
+from bsage.core.tasks import spawn_task
 from bsage.garden.embedder import Embedder
 from bsage.garden.file_index_reader import FileIndexReader
 from bsage.garden.graph_extractor import GraphExtractor
@@ -69,8 +70,12 @@ class AppState:
             self.vault, sync_manager=self.sync_manager, event_bus=self.event_bus
         )
 
-        # Credentials
-        self.credential_store = CredentialStore(settings.credentials_dir)
+        # Credentials — Fernet-at-rest when an encryption key is configured.
+        self.credential_store = CredentialStore(
+            settings.credentials_dir,
+            primary_key=settings.credential_encryption_key or None,
+            retired_keys=settings.credential_encryption_retired_keys,
+        )
 
         # LLM (reads from RuntimeConfig per-call)
         self.llm_client = LiteLLMClient(runtime_config=self.runtime_config)
@@ -211,9 +216,13 @@ class AppState:
         graph_sub = GraphSubscriber(self.graph_store, self.vault, self.graph_extractor)
         self.event_bus.subscribe(graph_sub)
 
-        # Background reindex to pick up manual vault edits (Obsidian, etc.)
-        self._reindex_task = asyncio.create_task(self._background_reindex())
-        self._graph_rebuild_task = asyncio.create_task(self._background_graph_rebuild())
+        # Background reindex to pick up manual vault edits (Obsidian, etc.).
+        # ``spawn_task`` keeps a strong reference and routes failures through
+        # structlog instead of asyncio's silent unawaited-task warning.
+        self._reindex_task = spawn_task(self._background_reindex(), name="bsage.startup.reindex")
+        self._graph_rebuild_task = spawn_task(
+            self._background_graph_rebuild(), name="bsage.startup.graph_rebuild"
+        )
 
         plugin_registry = await self.plugin_loader.load_all()
         skill_registry = await self.skill_loader.load_all()

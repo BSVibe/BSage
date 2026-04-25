@@ -52,6 +52,16 @@ class Settings(BaseSettings):
     # Embedding text limit
     max_embed_chars: int = Field(default=8000, gt=0)
 
+    # Credential encryption (Fernet symmetric encryption)
+    # Primary key — used for encrypting new writes. If empty, encryption is
+    # disabled and credentials remain plaintext (legacy mode for local-only
+    # development). Production deployments MUST set this.
+    credential_encryption_key: str = ""
+    # Retired keys (comma-separated, oldest first) — accepted for decryption
+    # of older ciphertexts during key rotation. After rotation completes,
+    # remove old keys here once all stored credentials are re-encrypted.
+    credential_encryption_retired_keys: list[str] = []
+
     # Authentication (BSVibe)
     bsvibe_auth_url: str = "https://auth.bsvibe.dev"
 
