@@ -404,6 +404,11 @@ def create_routes(state: AppState) -> APIRouter:
             resolved = state.vault.resolve_path(path)
         except VaultPathError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            # ``Path.resolve()`` raises ``ValueError`` on embedded null
+            # bytes — surface as a 400 traversal-style rejection rather
+            # than a 500 so attackers don't get to crash the endpoint.
+            raise HTTPException(status_code=400, detail=f"Invalid path: {exc}") from exc
 
         if not resolved.is_file():
             raise HTTPException(status_code=404, detail=f"File not found: {path}")
