@@ -37,7 +37,8 @@ from bsage.garden.sync import SyncManager
 from bsage.garden.vault import Vault
 from bsage.garden.vector_store import VectorStore
 from bsage.garden.writer import GardenWriter
-from bsage.gateway.auth import create_auth_provider, create_get_current_user
+from bsage.gateway.auth import create_auth_provider
+from bsage.gateway.authz import combined_principal
 from bsage.gateway.event_broadcaster import WebSocketEventBroadcaster
 from bsage.gateway.ws import manager as ws_manager
 from bsage.interface.ws_interface import WebSocketApprovalInterface
@@ -66,8 +67,13 @@ class AppState:
 
         # Garden layer
         self.vault = Vault(settings.vault_path)
+        # Phase 0 P0.5 — pass default tenant id so cron / migration writes
+        # still satisfy the tenant column when no principal is available.
         self.garden_writer = GardenWriter(
-            self.vault, sync_manager=self.sync_manager, event_bus=self.event_bus
+            self.vault,
+            sync_manager=self.sync_manager,
+            event_bus=self.event_bus,
+            default_tenant_id=settings.default_tenant_id or None,
         )
 
         # Credentials — Fernet-at-rest when an encryption key is configured.
@@ -84,11 +90,12 @@ class AppState:
         self._danger_map: dict[str, bool] = {}
 
         # Authentication
+        # Legacy provider kept for back-compat (used by WS auth route + the
+        # /auth/callback redirect helper). Phase 0 P0.5 routes the HTTP
+        # principal through ``bsvibe_authz.combined_principal`` instead, which
+        # accepts both user JWTs and audience-scoped service JWTs.
         self.auth_provider = create_auth_provider(settings)
-        self.get_current_user = create_get_current_user(
-            self.auth_provider,
-            service_api_keys=settings.service_api_keys,
-        )
+        self.get_current_user = combined_principal
 
         # WebSocket approval interface for SafeMode in Gateway context
         self.ws_approval_interface = WebSocketApprovalInterface(manager=ws_manager)

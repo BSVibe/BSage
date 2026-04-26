@@ -22,6 +22,7 @@ from bsage.core.plugin_loader import PluginMeta
 from bsage.core.skill_loader import SkillMeta
 from bsage.garden.markdown_utils import extract_frontmatter, extract_title
 from bsage.garden.writer import GardenNote
+from bsage.gateway.authz import require_bsage_permission
 from bsage.gateway.dependencies import AppState
 
 logger = structlog.get_logger(__name__)
@@ -121,6 +122,18 @@ class CreateDecisionRequest(BaseModel):
     source: str = "api"
 
 
+def _principal_tenant(principal: Any) -> str | None:
+    """Extract ``active_tenant_id`` from a principal in a way that works for
+    both real ``bsvibe_authz.User`` and the mock principals legacy tests put
+    onto ``state.get_current_user``."""
+    if principal is None:
+        return None
+    tid = getattr(principal, "active_tenant_id", None)
+    if isinstance(tid, str) and tid:
+        return tid
+    return None
+
+
 def _find_entry(state: AppState, name: str) -> PluginMeta | SkillMeta:
     """Look up a plugin or skill by name, raising 404 if not found."""
     try:
@@ -174,12 +187,39 @@ def create_routes(state: AppState) -> APIRouter:
     Routes are split into *public* (health, webhooks) and *protected*
     (everything else).  The protected router applies ``state.get_current_user``
     as a router-level dependency so individual handlers don't need to declare it.
+
+    Phase 0 P0.5 — ``state.get_current_user`` returns a ``bsvibe_authz.User``
+    (either a real human or a service principal). Handlers that need to stamp
+    ``tenant_id`` onto written notes pull the principal via
+    ``Depends(state.get_current_user)`` directly. Permission enforcement is
+    layered on top via :func:`bsage.gateway.authz.require_bsage_permission`,
+    which routes the same principal through OpenFGA.
     """
     public = APIRouter(prefix="/api")
     protected = APIRouter(
         prefix="/api",
         dependencies=[Depends(state.get_current_user)],
     )
+
+    # Per-route permission helpers — bind the BSage permission strings up-front
+    # so route definitions stay short. These are constructed once per app
+    # creation, NOT once per request.
+    #
+    # ``principal_dep=state.get_current_user`` makes the permission factory
+    # share the same principal source as the router-level auth dep — tests
+    # that override ``state.get_current_user`` automatically flow through to
+    # the permission check too.
+    _principal = state.get_current_user
+    knowledge_read = require_bsage_permission("bsage.knowledge.read", principal_dep=_principal)
+    knowledge_write = require_bsage_permission("bsage.knowledge.write", principal_dep=_principal)
+    decisions_write = require_bsage_permission("bsage.decisions.write", principal_dep=_principal)
+    vault_read = require_bsage_permission("bsage.vault.read", principal_dep=_principal)
+    notify_write = require_bsage_permission("bsage.notify.write", principal_dep=_principal)
+    config_read = require_bsage_permission("bsage.config.read", principal_dep=_principal)
+    config_write = require_bsage_permission("bsage.config.write", principal_dep=_principal)
+    plugins_read = require_bsage_permission("bsage.plugins.read", principal_dep=_principal)
+    plugins_execute = require_bsage_permission("bsage.plugins.execute", principal_dep=_principal)
+    chat_write = require_bsage_permission("bsage.chat.write", principal_dep=_principal)
 
     @public.get("/health")
     async def health() -> dict[str, str]:
@@ -210,7 +250,7 @@ def create_routes(state: AppState) -> APIRouter:
         return HTMLResponse(content=html)
 
     @protected.get("/plugins")
-    async def list_plugins() -> list[dict[str, Any]]:
+    async def list_plugins(_perm: None = Depends(plugins_read)) -> list[dict[str, Any]]:
         """List all loaded Plugins (code-based)."""
         registry = await state.plugin_loader.load_all()
         configured = state.credential_store.list_services()
@@ -221,7 +261,7 @@ def create_routes(state: AppState) -> APIRouter:
         ]
 
     @protected.get("/skills")
-    async def list_skills() -> list[dict[str, Any]]:
+    async def list_skills(_perm: None = Depends(plugins_read)) -> list[dict[str, Any]]:
         """List all loaded Skills (LLM-based)."""
         registry = await state.skill_loader.load_all()
         configured = state.credential_store.list_services()
@@ -232,7 +272,7 @@ def create_routes(state: AppState) -> APIRouter:
         ]
 
     @protected.post("/plugins/{name}/run")
-    async def run_plugin(name: str) -> dict[str, Any]:
+    async def run_plugin(name: str, _perm: None = Depends(plugins_execute)) -> dict[str, Any]:
         """Trigger a plugin by name via AgentLoop.on_input."""
         try:
             state.plugin_loader.get(name)
@@ -299,7 +339,7 @@ def create_routes(state: AppState) -> APIRouter:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @protected.post("/run/{name}")
-    async def run_entry(name: str) -> dict[str, Any]:
+    async def run_entry(name: str, _perm: None = Depends(plugins_execute)) -> dict[str, Any]:
         """Run a plugin or skill by name via unified registry."""
         if state.agent_loop is None:
             raise HTTPException(status_code=503, detail="Gateway not initialized")
@@ -322,7 +362,7 @@ def create_routes(state: AppState) -> APIRouter:
     # -- Credential setup endpoints ------------------------------------------
 
     @protected.get("/entries/{name}/credentials/fields")
-    async def credential_fields(name: str) -> dict[str, Any]:
+    async def credential_fields(name: str, _perm: None = Depends(plugins_read)) -> dict[str, Any]:
         """Return credential field definitions for a plugin or skill."""
         meta = _find_entry(state, name)
 
@@ -336,7 +376,9 @@ def create_routes(state: AppState) -> APIRouter:
         return {"name": name, "fields": []}
 
     @protected.post("/entries/{name}/credentials")
-    async def store_credentials(name: str, body: CredentialStoreRequest) -> dict[str, Any]:
+    async def store_credentials(
+        name: str, body: CredentialStoreRequest, _perm: None = Depends(config_write)
+    ) -> dict[str, Any]:
         """Store credentials for a plugin or skill via the GUI."""
         _find_entry(state, name)  # 404 if not found
 
@@ -349,7 +391,7 @@ def create_routes(state: AppState) -> APIRouter:
     # -- Enable/Disable toggle -----------------------------------------------
 
     @protected.post("/entries/{name}/toggle")
-    async def toggle_entry(name: str) -> dict[str, Any]:
+    async def toggle_entry(name: str, _perm: None = Depends(config_write)) -> dict[str, Any]:
         """Toggle enabled/disabled state for a plugin or skill."""
         disabled: list[str] = list(state.runtime_config.disabled_entries)
         if name in disabled:
@@ -367,12 +409,12 @@ def create_routes(state: AppState) -> APIRouter:
     # -- Vault browser -------------------------------------------------------
 
     @protected.get("/vault/actions")
-    async def list_actions() -> list[str]:
+    async def list_actions(_perm: None = Depends(vault_read)) -> list[str]:
         notes = await state.vault.read_notes("actions")
         return [str(p.name) for p in notes]
 
     @protected.get("/vault/tree")
-    async def vault_tree() -> list[dict[str, Any]]:
+    async def vault_tree(_perm: None = Depends(vault_read)) -> list[dict[str, Any]]:
         """Return the vault directory tree structure."""
         vault_root = state.vault.root
 
@@ -398,6 +440,7 @@ def create_routes(state: AppState) -> APIRouter:
     @protected.get("/vault/file")
     async def vault_file(
         path: str = Query(..., description="Relative path within the vault"),
+        _perm: None = Depends(vault_read),
     ) -> dict[str, Any]:
         """Return the content of a vault file."""
         try:
@@ -495,6 +538,7 @@ def create_routes(state: AppState) -> APIRouter:
     async def vault_search(
         q: str = Query(..., min_length=1, description="Search query"),
         max_files: int = Query(default=500, ge=1, le=2000, description="Max files to scan"),
+        _perm: None = Depends(vault_read),
     ) -> list[dict[str, Any]]:
         """Full-text search across vault .md files (case-insensitive, max 50 results)."""
         files = await _scan_vault_md_files(max_files=max_files)
@@ -516,6 +560,7 @@ def create_routes(state: AppState) -> APIRouter:
     @protected.get("/vault/backlinks")
     async def vault_backlinks(
         path: str = Query(..., description="Relative path of the target note"),
+        _perm: None = Depends(vault_read),
     ) -> list[dict[str, Any]]:
         """Find notes containing [[wikilink]] references to the given path."""
         files = await _scan_vault_md_files()
@@ -540,6 +585,7 @@ def create_routes(state: AppState) -> APIRouter:
     @protected.get("/vault/graph")
     async def vault_graph(
         max_files: int = Query(default=500, ge=1, le=2000, description="Max files to scan"),
+        _perm: None = Depends(vault_read),
     ) -> dict[str, Any]:
         """Return all notes as nodes and wikilink connections as edges."""
         files = await _scan_vault_md_files(max_files=max_files)
@@ -582,6 +628,7 @@ def create_routes(state: AppState) -> APIRouter:
     async def vault_communities(
         algorithm: str = Query(default="louvain", description="louvain or label_propagation"),
         min_size: int = Query(default=2, ge=2, le=100, description="Minimum community size"),
+        _perm: None = Depends(vault_read),
     ) -> dict[str, Any]:
         """Detect communities in the knowledge graph and return them."""
         from bsage.garden.community import (
@@ -612,6 +659,7 @@ def create_routes(state: AppState) -> APIRouter:
     async def vault_analytics(
         top_k: int = Query(default=20, ge=1, le=100),
         include_betweenness: bool = Query(default=False),
+        _perm: None = Depends(vault_read),
     ) -> dict[str, Any]:
         """Return graph analytics: centrality, stats, god nodes, gaps."""
         from dataclasses import asdict
@@ -640,6 +688,7 @@ def create_routes(state: AppState) -> APIRouter:
     @protected.get("/vault/tags")
     async def vault_tags(
         max_files: int = Query(default=500, ge=1, le=2000, description="Max files to scan"),
+        _perm: None = Depends(vault_read),
     ) -> dict[str, Any]:
         """Extract all #tag occurrences from vault files."""
         files = await _scan_vault_md_files(max_files=max_files)
@@ -668,6 +717,7 @@ def create_routes(state: AppState) -> APIRouter:
     async def knowledge_search(
         q: str = Query(..., min_length=1, description="Search query"),
         limit: int = Query(default=5, ge=1, le=50, description="Max results"),
+        _perm: None = Depends(knowledge_read),
     ) -> SearchResponse:
         """Semantic search over vault knowledge notes with full-text fallback."""
         results: list[SearchResultItem] = []
@@ -754,6 +804,7 @@ def create_routes(state: AppState) -> APIRouter:
     @protected.post("/vault/lint")
     async def run_vault_lint(
         stale_days: int = Query(default=90, ge=1, description="Days threshold for stale check"),
+        _perm: None = Depends(vault_read),
     ) -> dict[str, Any]:
         """Run a comprehensive vault health check."""
         from bsage.garden.vault_linter import VaultLinter
@@ -784,7 +835,7 @@ def create_routes(state: AppState) -> APIRouter:
     # -- Knowledge catalog ---------------------------------------------------
 
     @protected.get("/knowledge/catalog")
-    async def knowledge_catalog() -> dict[str, Any]:
+    async def knowledge_catalog(_perm: None = Depends(knowledge_read)) -> dict[str, Any]:
         """Return the auto-generated vault catalog grouped by note type."""
         summaries = await state.index_reader.get_all_summaries()
         by_type: dict[str, list[dict[str, Any]]] = {}
@@ -807,7 +858,11 @@ def create_routes(state: AppState) -> APIRouter:
         response_model=CreateEntryResponse,
         status_code=201,
     )
-    async def create_knowledge_entry(body: CreateEntryRequest) -> CreateEntryResponse:
+    async def create_knowledge_entry(
+        body: CreateEntryRequest,
+        principal: Any = Depends(_principal),
+        _perm: None = Depends(knowledge_write),
+    ) -> CreateEntryResponse:
         """Create a new knowledge entry via GardenWriter."""
         # Build content with wikilinks appended
         content = body.content
@@ -823,6 +878,7 @@ def create_routes(state: AppState) -> APIRouter:
             related=list(body.links),
             tags=list(body.tags),
             extra_fields=dict(body.metadata),
+            tenant_id=_principal_tenant(principal),
         )
 
         try:
@@ -847,7 +903,11 @@ def create_routes(state: AppState) -> APIRouter:
         response_model=CreateEntryResponse,
         status_code=201,
     )
-    async def create_decision_record(body: CreateDecisionRequest) -> CreateEntryResponse:
+    async def create_decision_record(
+        body: CreateDecisionRequest,
+        principal: Any = Depends(_principal),
+        _perm: None = Depends(decisions_write),
+    ) -> CreateEntryResponse:
         """Create a structured decision record as an insight note."""
         # Build structured markdown content from template
         alt_lines = "\n".join(f"- {alt}" for alt in body.alternatives)
@@ -870,6 +930,7 @@ def create_routes(state: AppState) -> APIRouter:
             source=body.source,
             tags=list(body.tags),
             extra_fields={"decision_record": True},
+            tenant_id=_principal_tenant(principal),
         )
 
         try:
@@ -890,7 +951,9 @@ def create_routes(state: AppState) -> APIRouter:
     # -- Notification ---------------------------------------------------------
 
     @protected.post("/notify", response_model=NotifyResponse)
-    async def send_notification(body: NotifyRequest) -> NotifyResponse:
+    async def send_notification(
+        body: NotifyRequest, _perm: None = Depends(notify_write)
+    ) -> NotifyResponse:
         """Send a notification through BSage's multi-channel notification system.
 
         Used by BSNexus and other BSVibe services to send messages without
@@ -959,7 +1022,7 @@ def create_routes(state: AppState) -> APIRouter:
     # -- Config --------------------------------------------------------------
 
     @protected.get("/config")
-    async def get_config() -> dict[str, Any]:
+    async def get_config(_perm: None = Depends(config_read)) -> dict[str, Any]:
         """Return current runtime config (api_key excluded)."""
         snap = state.runtime_config.snapshot()
         snap["has_llm_api_key"] = bool(state.runtime_config.llm_api_key)
@@ -967,7 +1030,9 @@ def create_routes(state: AppState) -> APIRouter:
         return snap
 
     @protected.patch("/config")
-    async def update_config(update: ConfigUpdate) -> dict[str, Any]:
+    async def update_config(
+        update: ConfigUpdate, _perm: None = Depends(config_write)
+    ) -> dict[str, Any]:
         """Update runtime config. Only provided fields are changed."""
         changes: dict[str, Any] = {
             field: getattr(update, field)
@@ -989,7 +1054,7 @@ def create_routes(state: AppState) -> APIRouter:
         return snap
 
     @protected.post("/config/test-llm")
-    async def test_llm() -> dict[str, Any]:
+    async def test_llm(_perm: None = Depends(config_write)) -> dict[str, Any]:
         """Send a minimal ping to the configured LLM and report result.
 
         Does not modify any state. Uses current runtime_config (model +
@@ -1035,7 +1100,7 @@ def create_routes(state: AppState) -> APIRouter:
         }
 
     @protected.post("/chat")
-    async def chat(body: ChatMessage) -> dict[str, str]:
+    async def chat(body: ChatMessage, _perm: None = Depends(chat_write)) -> dict[str, str]:
         """Vault-aware conversational chat with plugin tool use."""
         if state.chat_bridge is None:
             raise HTTPException(status_code=503, detail="Gateway not initialized")
@@ -1051,7 +1116,7 @@ def create_routes(state: AppState) -> APIRouter:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @protected.get("/sync-backends")
-    async def list_sync_backends() -> list[str]:
+    async def list_sync_backends(_perm: None = Depends(config_read)) -> list[str]:
         """Return names of registered sync backends."""
         return state.sync_manager.list_backends()
 

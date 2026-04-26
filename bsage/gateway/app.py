@@ -7,12 +7,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
+from bsvibe_authz import get_settings_dep as _authz_get_settings_dep
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from bsage.core.config import Settings
+from bsage.gateway.authz import get_authz_settings
 from bsage.gateway.dependencies import AppState
 from bsage.gateway.mcp import create_mcp_routes
 from bsage.gateway.rate_limit import RateLimiter, RateLimitMiddleware
@@ -52,6 +54,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.bsage = state
+
+    # Phase 0 P0.5 — point bsvibe_authz at our tolerant settings adapter so
+    # require_bsage_permission() can resolve when the deployment hasn't yet
+    # bootstrapped OpenFGA (empty OPENFGA_API_URL → permissive mode).
+    app.dependency_overrides[_authz_get_settings_dep] = get_authz_settings
 
     # Rate limiting — per-IP sliding window
     rate_limiter = RateLimiter(requests_per_minute=settings.rate_limit_per_minute)

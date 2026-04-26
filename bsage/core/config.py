@@ -66,7 +66,21 @@ class Settings(BaseSettings):
     bsvibe_auth_url: str = "https://auth.bsvibe.dev"
 
     # Service-to-service API keys (JSON: {"service-name": "key"})
+    # DEPRECATED Phase 0 P0.5+: use service JWTs (audience=bsage) instead.
+    # Kept so existing deployments don't 401 mid-rollout.
     service_api_keys: dict[str, str] = {}
+
+    # bsvibe-authz / OpenFGA (Phase 0 P0.5)
+    # Empty openfga_api_url disables OpenFGA enforcement (local dev mode).
+    openfga_api_url: str = ""
+    openfga_store_id: str = ""
+    openfga_auth_model_id: str = ""
+    openfga_auth_token: str = ""
+    service_token_signing_secret: str = ""
+
+    # Default tenant id used when a write happens without an authenticated
+    # principal (cron, local dev, or migration). Personal-tenant only.
+    default_tenant_id: str = "tenant-default"
 
     # CORS
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]

@@ -223,6 +223,7 @@ dependencies = [
     { name = "aiosqlite" },
     { name = "apscheduler" },
     { name = "bsvibe-auth", extra = ["fastapi"] },
+    { name = "bsvibe-authz" },
     { name = "click" },
     { name = "cryptography" },
     { name = "fastapi" },
@@ -259,6 +260,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'all-plugins'", specifier = ">=1.28.0" },
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.28.0" },
     { name = "bsvibe-auth", extras = ["fastapi"], git = "https://github.com/BSVibe/BSVibe-Auth.git?subdirectory=python&rev=v0.4.0" },
+    { name = "bsvibe-authz", git = "https://github.com/BSVibe/bsvibe-python.git?subdirectory=packages%2Fbsvibe-authz&rev=feat%2Fbsvibe-authz-impl" },
     { name = "click", specifier = ">=8.0.0" },
     { name = "cryptography", specifier = ">=43.0.0" },
     { name = "fastapi", specifier = ">=0.110.0" },
@@ -292,6 +294,19 @@ dependencies = [
 [package.optional-dependencies]
 fastapi = [
     { name = "fastapi" },
+]
+
+[[package]]
+name = "bsvibe-authz"
+version = "0.1.0"
+source = { git = "https://github.com/BSVibe/bsvibe-python.git?subdirectory=packages%2Fbsvibe-authz&rev=feat%2Fbsvibe-authz-impl#faff9e171aa8e60750cd9354a4918bf9c6cd259b" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "structlog" },
 ]
 
 [[package]]

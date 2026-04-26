@@ -21,6 +21,7 @@ dependencies = [
     "aiosqlite>=0.19.0",
     "jsonschema>=4.0.0",
     "bsvibe-auth[fastapi] @ git+https://github.com/BSVibe/BSVibe-Auth.git@v0.4.0#subdirectory=python",
+    "bsvibe-authz @ git+https://github.com/BSVibe/bsvibe-python.git@feat/bsvibe-authz-impl#subdirectory=packages/bsvibe-authz",
     "python-dateutil>=2.9.0.post0",
     "networkx>=3.0",
     "cryptography>=43.0.0",
@@ -52,6 +53,13 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "A", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI idiomatically uses `param: Type = Depends(callable)` in route
+# signatures — B008 flags this as a function call in argument defaults but
+# FastAPI explicitly expects this pattern.
+"bsage/gateway/routes.py" = ["B008"]
+"bsage/gateway/authz.py" = ["B008"]
 
 [tool.coverage.run]
 source = ["bsage"]

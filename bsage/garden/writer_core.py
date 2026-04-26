@@ -206,6 +206,12 @@ class _WriterIOMixin:
                 "confidence": note.confidence,
                 "knowledge_layer": note.knowledge_layer,
             }
+            # Phase 0 P0.5 — tenant isolation: stamp tenant_id into frontmatter
+            # so retrieval can filter by tenant. Falls back to writer default
+            # when the caller didn't specify (cron, migration backfill).
+            tenant_id = note.tenant_id or self._default_tenant_id
+            if tenant_id:
+                metadata["tenant_id"] = tenant_id
             if note.aliases:
                 metadata["aliases"] = note.aliases
             # Extra fields for specialized note types (fact, preference, etc.)
@@ -727,11 +733,16 @@ class GardenWriter(_WriterIOMixin, _WriterMutationMixin, _WriterToolHandlersMixi
         sync_manager: SyncManager | None = None,
         event_bus: EventBus | None = None,
         ontology: OntologyRegistry | None = None,
+        default_tenant_id: str | None = None,
     ) -> None:
         self._vault = vault
         self._sync_manager = sync_manager
         self._event_bus = event_bus
         self._ontology = ontology
+        # Phase 0 P0.5 — fallback tenant id used when GardenNote.tenant_id is
+        # None. Lets cron / migration writes still satisfy the tenant column
+        # without dragging a principal through every internal call site.
+        self._default_tenant_id = default_tenant_id
         self._log_lock = asyncio.Lock()
         self._garden_lock = asyncio.Lock()
         self._seed_lock = asyncio.Lock()

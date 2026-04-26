@@ -61,6 +61,11 @@ class GardenNote:
     relations: dict[str, list[str]] = field(default_factory=dict)
     aliases: list[str] = field(default_factory=list)
     extra_fields: dict[str, Any] = field(default_factory=dict)
+    # Phase 0 P0.5 — tenant isolation. None means "use writer default" (set by
+    # GardenWriter from settings.default_tenant_id) so cron / local writes
+    # don't 500. Authenticated route handlers MUST set this to the active
+    # tenant_id from the principal.
+    tenant_id: str | None = None
 
 
 def slugify(title: str) -> str:
