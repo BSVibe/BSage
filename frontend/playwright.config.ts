@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const frontendHost = process.env.BSAGE_TEST_FRONTEND_HOST || "localhost";
+const frontendPort = Number(process.env.BSAGE_TEST_FRONTEND_PORT || 5173);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -12,7 +13,7 @@ export default defineConfig({
   reporter: process.env.CI ? "github" : "line",
 
   use: {
-    baseURL: `http://${frontendHost}:5173`,
+    baseURL: `http://${frontendHost}:${frontendPort}`,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -25,9 +26,9 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: "npm run dev",
-    url: `http://${frontendHost}:5173`,
+    command: `next dev -p ${frontendPort}`,
+    url: `http://${frontendHost}:${frontendPort}`,
     reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
+    timeout: 120_000,
   },
 });

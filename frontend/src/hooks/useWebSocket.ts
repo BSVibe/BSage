@@ -11,7 +11,8 @@ export function useWebSocket() {
 
   useEffect(() => {
     (async () => {
-      const envWsUrl = import.meta.env.VITE_WS_URL;
+      const envWsUrl =
+        process.env.NEXT_PUBLIC_WS_URL || process.env.VITE_WS_URL;
       const url = envWsUrl
         ? envWsUrl
         : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;

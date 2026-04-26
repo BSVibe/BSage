@@ -48,7 +48,7 @@ function buildStemLookup(tree: VaultTreeEntry[]): Map<string, string> {
       const fullPath = entry.path ? `${entry.path}/${file}` : file;
       if (!map.has(stem)) {
         map.set(stem, fullPath);
-      } else if (import.meta.env.DEV) {
+      } else if (process.env.NODE_ENV !== "production") {
         console.warn(`VaultView: stem collision for "${stem}" — "${fullPath}" ignored, using "${map.get(stem)}"`);
       }
     }

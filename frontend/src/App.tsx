@@ -1,3 +1,6 @@
+'use client';
+
+import './i18n';
 import { useEffect, useState } from "react";
 import { useApproval } from "./hooks/useApproval";
 import { consumeAuthCallback, useAuth } from "./hooks/useAuth";
@@ -14,8 +17,10 @@ import { SettingsView } from "./components/settings/SettingsView";
 import { VaultView } from "./components/vault/VaultView";
 
 function useHashRoute() {
-  const [hash, setHash] = useState(window.location.hash || "#/");
+  // SSR-safe initial value — hash is only available on the client.
+  const [hash, setHash] = useState("#/");
   useEffect(() => {
+    setHash(window.location.hash || "#/");
     const handler = () => setHash(window.location.hash || "#/");
     window.addEventListener("hashchange", handler);
     return () => window.removeEventListener("hashchange", handler);

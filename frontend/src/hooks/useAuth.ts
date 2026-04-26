@@ -7,7 +7,10 @@ interface User {
   role: string;
 }
 
-const AUTH_URL = import.meta.env.VITE_AUTH_URL || "https://auth.bsvibe.dev";
+const AUTH_URL =
+  process.env.NEXT_PUBLIC_AUTH_URL ||
+  process.env.VITE_AUTH_URL ||
+  "https://auth.bsvibe.dev";
 
 // LocalStorage keys for non-cookie-SSO environments (local dev, Tailscale, etc.)
 const LS_ACCESS_TOKEN = "bsage_access_token";

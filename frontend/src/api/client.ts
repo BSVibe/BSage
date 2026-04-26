@@ -16,7 +16,8 @@ import type {
 } from "./types";
 import { getAccessToken } from "../hooks/useAuth";
 
-const BASE = import.meta.env.VITE_API_URL || "/api";
+const BASE =
+  process.env.NEXT_PUBLIC_API_URL || process.env.VITE_API_URL || "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
