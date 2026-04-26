@@ -377,8 +377,13 @@ class TestAppState:
         )
         state = AppState(settings)
         await state.initialize()
-        assert state.agent_loop is not None
-        assert state.scheduler is not None
+        try:
+            assert state.agent_loop is not None
+            assert state.scheduler is not None
+        finally:
+            # Shutdown drains the SQLite write queue so the writer task
+            # doesn't outlive the test loop.
+            await state.shutdown()
 
     async def test_event_bus_created_with_broadcaster(self, tmp_path) -> None:
         from bsage.core.events import EventBus
