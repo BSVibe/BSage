@@ -41,6 +41,7 @@ from bsage.garden.vault import Vault
 if TYPE_CHECKING:
     from bsage.core.events import EventBus
     from bsage.core.skill_context import GraphInterface
+    from bsage.garden.audit_outbox import AiosqliteAuditOutbox
     from bsage.garden.ontology import OntologyRegistry
     from bsage.garden.sync import SyncManager
 
@@ -65,6 +66,8 @@ class _WriterIOMixin:
     _sync_manager: SyncManager | None
     _event_bus: EventBus | None
     _ontology: OntologyRegistry | None
+    _audit_outbox: AiosqliteAuditOutbox | None
+    _default_tenant_id: str | None
     _log_lock: asyncio.Lock
     _garden_lock: asyncio.Lock
     _seed_lock: asyncio.Lock
@@ -72,6 +75,17 @@ class _WriterIOMixin:
     # --- helpers expected to be provided by GardenWriter -------------------
     async def _notify_sync(
         self, event_type_str: str, path: Path, source: str
+    ) -> None:  # pragma: no cover - implemented in GardenWriter
+        ...
+
+    async def _emit_vault_modified(
+        self,
+        *,
+        path: Path,
+        operation: str,
+        source: str,
+        note_type: str | None = None,
+        tenant_id: str | None = None,
     ) -> None:  # pragma: no cover - implemented in GardenWriter
         ...
 
@@ -164,6 +178,12 @@ class _WriterIOMixin:
         await emit_event(
             self._event_bus, "SEED_WRITTEN", {"path": str(file_path), "source": source}
         )
+        await self._emit_vault_modified(
+            path=file_path,
+            operation="seed_written",
+            source=source,
+            note_type="seed",
+        )
         return file_path
 
     async def write_garden(self, note: GardenNote | dict) -> Path:
@@ -239,6 +259,13 @@ class _WriterIOMixin:
         await self._notify_sync("garden", file_path, note.source)
         await emit_event(
             self._event_bus, "GARDEN_WRITTEN", {"path": str(file_path), "source": note.source}
+        )
+        await self._emit_vault_modified(
+            path=file_path,
+            operation="garden_written",
+            source=note.source,
+            note_type=note.note_type,
+            tenant_id=tenant_id,
         )
         return file_path
 
@@ -346,9 +373,22 @@ class _WriterMutationMixin:
 
     _vault: Vault
     _event_bus: EventBus | None
+    _audit_outbox: AiosqliteAuditOutbox | None
+    _default_tenant_id: str | None
 
     async def _notify_sync(
         self, event_type_str: str, path: Path, source: str
+    ) -> None:  # pragma: no cover - implemented in GardenWriter
+        ...
+
+    async def _emit_vault_modified(
+        self,
+        *,
+        path: Path,
+        operation: str,
+        source: str,
+        note_type: str | None = None,
+        tenant_id: str | None = None,
     ) -> None:  # pragma: no cover - implemented in GardenWriter
         ...
 
@@ -489,6 +529,11 @@ class _WriterMutationMixin:
         logger.info("note_updated", path=str(resolved))
         await self._notify_sync("garden", resolved, "update")
         await emit_event(self._event_bus, "NOTE_UPDATED", {"path": str(resolved)})
+        await self._emit_vault_modified(
+            path=resolved,
+            operation="note_updated",
+            source="update",
+        )
         return resolved
 
     async def update_frontmatter_related(self, note_path: str, linked_paths: set[str]) -> None:
@@ -567,6 +612,11 @@ class _WriterMutationMixin:
         logger.info("note_appended", path=str(resolved))
         await self._notify_sync("garden", resolved, "update")
         await emit_event(self._event_bus, "NOTE_UPDATED", {"path": str(resolved)})
+        await self._emit_vault_modified(
+            path=resolved,
+            operation="note_appended",
+            source="update",
+        )
 
     async def delete_note(self, path: str) -> None:
         """Delete a note from the vault.
@@ -589,6 +639,11 @@ class _WriterMutationMixin:
         logger.info("note_deleted", path=str(resolved))
         await self._notify_sync("garden", resolved, "delete")
         await emit_event(self._event_bus, "NOTE_DELETED", {"path": str(resolved)})
+        await self._emit_vault_modified(
+            path=resolved,
+            operation="note_deleted",
+            source="delete",
+        )
 
 
 class _WriterToolHandlersMixin:
@@ -734,6 +789,7 @@ class GardenWriter(_WriterIOMixin, _WriterMutationMixin, _WriterToolHandlersMixi
         event_bus: EventBus | None = None,
         ontology: OntologyRegistry | None = None,
         default_tenant_id: str | None = None,
+        audit_outbox: AiosqliteAuditOutbox | None = None,
     ) -> None:
         self._vault = vault
         self._sync_manager = sync_manager
@@ -743,6 +799,10 @@ class GardenWriter(_WriterIOMixin, _WriterMutationMixin, _WriterToolHandlersMixi
         # None. Lets cron / migration writes still satisfy the tenant column
         # without dragging a principal through every internal call site.
         self._default_tenant_id = default_tenant_id
+        # Phase Audit Batch 2 — optional outbox; when wired, the writer emits
+        # ``sage.vault.file_modified`` events after every successful vault
+        # write. ``None`` keeps test fixtures simple (no audit infra needed).
+        self._audit_outbox = audit_outbox
         self._log_lock = asyncio.Lock()
         self._garden_lock = asyncio.Lock()
         self._seed_lock = asyncio.Lock()
@@ -759,6 +819,81 @@ class GardenWriter(_WriterIOMixin, _WriterMutationMixin, _WriterToolHandlersMixi
             source=source,
         )
         await self._sync_manager.notify(event)
+
+    async def _emit_vault_modified(
+        self,
+        *,
+        path: Path,
+        operation: str,
+        source: str,
+        note_type: str | None = None,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Best-effort emit of ``sage.vault.file_modified`` after a write.
+
+        For mutating ops on knowledge entries (update / append / delete) we
+        also emit ``sage.knowledge.entry_updated`` so audit consumers can
+        track lifecycle without parsing every vault path themselves.
+
+        Failures here NEVER raise — audit observability must not break a
+        successful vault write. The handler logs and continues.
+        """
+        if self._audit_outbox is None or not self._audit_outbox.is_open:
+            return
+        try:
+            from bsvibe_audit import AuditActor, AuditResource
+            from bsvibe_audit.events.sage import (
+                KnowledgeEntryUpdated,
+                VaultFileModified,
+            )
+
+            from bsage.garden.audit_outbox import safe_emit
+
+            try:
+                rel_path = str(path.relative_to(self._vault.root))
+            except (ValueError, AttributeError):
+                rel_path = str(path)
+
+            actor = AuditActor(type="system", id="bsage")
+            effective_tenant = tenant_id or self._default_tenant_id
+
+            await safe_emit(
+                self._audit_outbox,
+                VaultFileModified(
+                    actor=actor,
+                    tenant_id=effective_tenant,
+                    resource=AuditResource(type="vault_file", id=rel_path),
+                    data={
+                        "operation": operation,
+                        "source": source,
+                        "note_type": note_type,
+                    },
+                ),
+            )
+
+            # Knowledge-entry update lifecycle: only fire for in-place
+            # mutations on garden notes (skip seed/action/input-log writes).
+            mutation_ops = {"note_updated", "note_appended", "note_deleted"}
+            non_knowledge_prefixes = ("seeds/", "actions/", ".bsage/")
+            if operation in mutation_ops and not any(
+                rel_path.startswith(p) for p in non_knowledge_prefixes
+            ):
+                note_id = Path(rel_path).stem
+                await safe_emit(
+                    self._audit_outbox,
+                    KnowledgeEntryUpdated(
+                        actor=actor,
+                        tenant_id=effective_tenant,
+                        resource=AuditResource(type="knowledge_entry", id=note_id),
+                        data={
+                            "operation": operation,
+                            "source": source,
+                            "path": rel_path,
+                        },
+                    ),
+                )
+        except Exception:  # noqa: BLE001 — audit must never break a write
+            logger.warning("vault_audit_emit_failed", path=str(path), exc_info=True)
 
     @staticmethod
     def _find_dedup_path(directory: Path, slug: str) -> Path:

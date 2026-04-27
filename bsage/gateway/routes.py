@@ -20,6 +20,7 @@ from bsage.core.exceptions import VaultPathError
 from bsage.core.patterns import WIKILINK_RE
 from bsage.core.plugin_loader import PluginMeta
 from bsage.core.skill_loader import SkillMeta
+from bsage.garden.audit_outbox import safe_emit as _audit_safe_emit
 from bsage.garden.markdown_utils import extract_frontmatter, extract_title
 from bsage.garden.writer import GardenNote
 from bsage.gateway.authz import require_bsage_permission
@@ -132,6 +133,21 @@ def _principal_tenant(principal: Any) -> str | None:
     if isinstance(tid, str) and tid:
         return tid
     return None
+
+
+def _audit_actor_from_principal(principal: Any) -> Any:
+    """Build an :class:`AuditActor` from a principal, falling back to system.
+
+    Imported lazily so test fixtures that mock the routes module without
+    touching audit infra do not pay an import cost.
+    """
+    from bsvibe_audit import AuditActor
+
+    if principal is None:
+        return AuditActor(type="system", id="bsage")
+    pid = getattr(principal, "id", None) or getattr(principal, "sub", None) or "anonymous"
+    email = getattr(principal, "email", None)
+    return AuditActor(type="user", id=str(pid), email=email if isinstance(email, str) else None)
 
 
 def _find_entry(state: AppState, name: str) -> PluginMeta | SkillMeta:
@@ -894,6 +910,29 @@ def create_routes(state: AppState) -> APIRouter:
         now = datetime.now(tz=UTC).isoformat()
         note_id = Path(rel_path).stem
 
+        # Phase Audit Batch 2 — sage.knowledge.entry_created. Failures are
+        # swallowed by ``safe_emit`` so the sync-API contract (201 + body)
+        # is preserved even when the audit outbox is offline.
+        with contextlib.suppress(Exception):
+            from bsvibe_audit import AuditResource
+            from bsvibe_audit.events.sage import KnowledgeEntryCreated
+
+            await _audit_safe_emit(
+                getattr(state, "audit_outbox", None),
+                KnowledgeEntryCreated(
+                    actor=_audit_actor_from_principal(principal),
+                    tenant_id=_principal_tenant(principal),
+                    resource=AuditResource(type="knowledge_entry", id=note_id),
+                    data={
+                        "title": body.title,
+                        "note_type": body.note_type,
+                        "tags": list(body.tags),
+                        "source": body.source,
+                        "path": rel_path,
+                    },
+                ),
+            )
+
         return CreateEntryResponse(id=note_id, path=rel_path, created_at=now)
 
     # -- Decision records ----------------------------------------------------
@@ -945,6 +984,29 @@ def create_routes(state: AppState) -> APIRouter:
 
         now = datetime.now(tz=UTC).isoformat()
         note_id = Path(rel_path).stem
+
+        # Phase Audit Batch 2 — sage.decision.recorded. Same safety contract
+        # as the entry route: emit failure must not change the 201 response.
+        with contextlib.suppress(Exception):
+            from bsvibe_audit import AuditResource
+            from bsvibe_audit.events.sage import DecisionRecorded
+
+            await _audit_safe_emit(
+                getattr(state, "audit_outbox", None),
+                DecisionRecorded(
+                    actor=_audit_actor_from_principal(principal),
+                    tenant_id=_principal_tenant(principal),
+                    resource=AuditResource(type="decision", id=note_id),
+                    data={
+                        "title": body.title,
+                        "decision": body.decision,
+                        "alternatives": list(body.alternatives),
+                        "tags": list(body.tags),
+                        "source": body.source,
+                        "path": rel_path,
+                    },
+                ),
+            )
 
         return CreateEntryResponse(id=note_id, path=rel_path, created_at=now)
 
