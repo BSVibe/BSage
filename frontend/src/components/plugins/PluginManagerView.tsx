@@ -56,7 +56,10 @@ export function PluginManagerView() {
   }, []);
 
   useEffect(() => {
-    refreshData().finally(() => setLoading(false));
+    const id = window.setTimeout(() => {
+      refreshData().finally(() => setLoading(false));
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [refreshData]);
 
   const allEntries = useMemo(() => [...plugins, ...skills], [plugins, skills]);

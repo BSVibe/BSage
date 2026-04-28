@@ -34,7 +34,6 @@ export function SearchPanel({ onSelectFile }: SearchPanelProps) {
   useEffect(() => {
     clearTimeout(timerRef.current);
     if (!query.trim()) {
-      setResults([]);
       return;
     }
     timerRef.current = setTimeout(() => doSearch(query), 300);
@@ -57,7 +56,10 @@ export function SearchPanel({ onSelectFile }: SearchPanelProps) {
         />
         {isActive && (
           <button
-            onClick={() => setQuery("")}
+            onClick={() => {
+              setQuery("");
+              setResults([]);
+            }}
             className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-300"
           >
             <X className="w-3.5 h-3.5" />

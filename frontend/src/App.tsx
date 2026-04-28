@@ -19,9 +19,10 @@ import { VaultView } from "./components/vault/VaultView";
 
 function useHashRoute() {
   // SSR-safe initial value — hash is only available on the client.
-  const [hash, setHash] = useState("#/");
+  const [hash, setHash] = useState(() =>
+    typeof window === "undefined" ? "#/" : window.location.hash || "#/",
+  );
   useEffect(() => {
-    setHash(window.location.hash || "#/");
     const handler = () => setHash(window.location.hash || "#/");
     window.addEventListener("hashchange", handler);
     return () => window.removeEventListener("hashchange", handler);

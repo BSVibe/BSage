@@ -80,7 +80,10 @@ export function DashboardView() {
   }, []);
 
   useEffect(() => {
-    void loadData();
+    const id = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [loadData]);
 
   useEffect(() => {

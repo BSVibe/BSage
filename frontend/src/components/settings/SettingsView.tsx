@@ -37,7 +37,10 @@ export function SettingsView() {
   }, []);
 
   useEffect(() => {
-    void refreshConfig();
+    const id = window.setTimeout(() => {
+      void refreshConfig();
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [refreshConfig]);
 
   const handleSafeMode = useCallback(async (checked: boolean) => {

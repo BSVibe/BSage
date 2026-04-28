@@ -1,12 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Phase Z migration: lint is owned by the existing flat ESLint config and run
-  // independently via `npm run lint`. Skip Next's built-in lint pass during
-  // `next build` so React 19 compiler-strict rules (set-state-in-effect, etc.)
-  // don't gate the build on pre-existing patterns that were valid under Vite.
-  // Refactoring those call sites is out of scope for this migration PR.
-  eslint: { ignoreDuringBuilds: true },
   // Preserve the previous Vercel rewrite: proxy /api/* to the BSage backend.
   // In production on Vercel this matches the rewrites previously declared in
   // vercel.json (now deleted, since Next.js auto-detects on Vercel).
