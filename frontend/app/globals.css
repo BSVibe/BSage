@@ -50,6 +50,14 @@
 }
 
 :root {
+  /* BSage signature emerald — overrides @bsvibe/design-tokens default accent.
+   * Consumed by @bsvibe/layout (ResponsiveSidebar active border, SidebarBrand
+   * name color, SidebarUserCard avatar). The @theme block above already sets
+   * --color-accent for Tailwind utilities; this :root declaration makes the
+   * variable available to inline styles and arbitrary-value classes. */
+  --color-accent: #10b981;
+  --color-accent-hover: color-mix(in srgb, var(--color-accent) 80%, white);
+  --color-accent-bg-soft: color-mix(in srgb, var(--color-accent) 10%, transparent);
   --color-accent-rgb: 16 185 129;
 }
 
@@ -184,6 +192,44 @@
 /* ── No-scrollbar utility ── */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ----------------------------------------------------------------------
+ * BSage sidebar active state — overlay for hash-routed nav items.
+ *
+ * `@bsvibe/layout` `ResponsiveSidebar` derives active state from
+ * `usePathname()`. BSage runs as a single Next.js page (the SPA renders
+ * everything at `/`) with hash routing, so `usePathname()` always returns
+ * "/" and the shared component cannot distinguish between hash routes.
+ *
+ * The Sidebar wrapper marks the active item's label span with
+ * `data-bsage-active="true"`. We promote that signal up to the parent
+ * `<a class="bsvibe-sidebar__item ...">` so the active item gets the
+ * unified `border-l-4 border-[var(--color-accent)]` highlight that the
+ * rest of the BSVibe ecosystem uses.
+ * ---------------------------------------------------------------------- */
+.bsvibe-sidebar__item:has([data-bsage-active="true"]) {
+  border-left-width: 4px;
+  border-left-color: var(--color-accent);
+  background-color: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  color: var(--color-gray-50);
+  font-weight: 600;
+}
+
+/* The shared `ResponsiveSidebar` puts the mobile hamburger trigger at
+ * the document root with no z-index, while the drawer `<aside>` lives
+ * at z-40 (translated off-screen when closed). On mobile (md:hidden)
+ * the trigger needs to sit above the drawer's offscreen bbox so
+ * Playwright / users can actually tap it. Promote the hamburger to
+ * z-50 + position fixed at the same top-left as BSage's own legacy
+ * trigger so visual placement matches the rest of the chrome. */
+@media (max-width: 767px) {
+  .bsvibe-sidebar__hamburger {
+    position: fixed;
+    top: 0.75rem;
+    left: 1rem;
+    z-index: 50;
+  }
+}
 
 /* ----------------------------------------------------------------------
  * Phase B (Batch 2) — mobile-friendly responsive utilities.

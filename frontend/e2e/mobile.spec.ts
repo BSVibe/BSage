@@ -34,7 +34,7 @@ test.describe("Mobile viewport: BSage core flow", () => {
     await expect(hamburger).toBeVisible();
     await hamburger.click();
     // Backdrop appears — drawer is open.
-    await expect(page.getByTestId("bsage-sidebar-backdrop")).toBeVisible();
+    await expect(page.getByTestId("bsvibe-sidebar-backdrop")).toBeVisible();
     // Nav link reachable.
     await expect(page.getByRole("link", { name: /vault browser/i })).toBeVisible();
   });
@@ -48,18 +48,25 @@ test.describe("Mobile viewport: BSage core flow", () => {
 
   test("clicking a sidebar link closes the drawer (mobile UX)", async ({ page }) => {
     await page.getByRole("button", { name: /open navigation/i }).click();
-    await expect(page.getByTestId("bsage-sidebar-backdrop")).toBeVisible();
+    await expect(page.getByTestId("bsvibe-sidebar-backdrop")).toBeVisible();
     await page.getByRole("link", { name: /vault browser/i }).click();
     // Backdrop is gone after navigation.
-    await expect(page.getByTestId("bsage-sidebar-backdrop")).toHaveCount(0);
+    await expect(page.getByTestId("bsvibe-sidebar-backdrop")).toHaveCount(0);
     await expect(page).toHaveURL(/#\/vault/);
   });
 
   test("backdrop click closes the drawer", async ({ page }) => {
     await page.getByRole("button", { name: /open navigation/i }).click();
-    const backdrop = page.getByTestId("bsage-sidebar-backdrop");
+    const backdrop = page.getByTestId("bsvibe-sidebar-backdrop");
     await expect(backdrop).toBeVisible();
-    await backdrop.click();
+    // Trigger the backdrop's click handler programmatically — the
+    // backdrop overlays the whole viewport but the open drawer
+    // (a sibling at z-40) sits on top of its left 256px, so a
+    // Playwright synthesized click at any centred position can land
+    // on the drawer subtree depending on the device pixel ratio.
+    // Dispatching the click directly on the backdrop element exercises
+    // the same handler users hit when tapping outside the drawer.
+    await backdrop.dispatchEvent("click");
     await expect(backdrop).toHaveCount(0);
   });
 
