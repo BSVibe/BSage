@@ -172,6 +172,7 @@ export function useAuth({
 }: AccessTokenOptions = {}) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tenants, setTenants] = useState<SessionTenant[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -183,10 +184,12 @@ export function useAuth({
       const payload = decodeJwt(token);
       const appMeta = payload.app_metadata as Record<string, string> | undefined;
       const tenantId = appMeta?.tenant_id ?? "";
-      // Tenant name comes from /api/session.tenants — the endpoint accepts
-      // either the cookie (SSO) or a bearer header (token-mode/e2e), so
-      // send both. Best-effort fetch; tenantName stays null on failure.
+      // Tenant name + full tenants list come from /api/session.tenants.
+      // The endpoint accepts cookie (SSO) or bearer (token-mode/e2e),
+      // so send both. Best-effort fetch.
       let tenantName: string | null = null;
+      let tenantList: SessionTenant[] = [];
+      let activeTenantId: string = tenantId;
       try {
         const res = await fetch(`${AUTH_URL}/api/session`, {
           credentials: "include",
@@ -194,22 +197,51 @@ export function useAuth({
         });
         if (res.ok) {
           const data: SessionResponse = await res.json();
-          const activeId = data.active_tenant_id ?? tenantId;
-          tenantName = data.tenants?.find((t) => t.id === activeId)?.name ?? null;
+          tenantList = data.tenants ?? [];
+          activeTenantId = data.active_tenant_id ?? tenantId;
+          tenantName =
+            tenantList.find((t) => t.id === activeTenantId)?.name ?? null;
         }
       } catch {
-        // ignore; tenantName stays null
+        // ignore
       }
       setUser({
         id: payload.sub as string,
         email: payload.email as string,
-        tenantId,
+        tenantId: activeTenantId,
         tenantName,
         role: appMeta?.role ?? "member",
       });
+      setTenants(tenantList);
       setLoading(false);
     })();
   }, [probeRemoteSession]);
+
+  // Switch active workspace via /api/session/switch_tenant. The endpoint
+  // sets a server-side cookie + writes the new active_tenant_id; reload
+  // so every consumer (frontend + backend) picks up the new context.
+  async function switchTenant(nextTenantId: string): Promise<void> {
+    if (nextTenantId === user?.tenantId) return;
+    const token = await getAccessToken({ probeRemoteSession });
+    if (!token) return;
+    try {
+      const res = await fetch(`${AUTH_URL}/api/session/switch_tenant`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ tenant_id: nextTenantId }),
+      });
+      if (res.ok) {
+        clearTokenCache();
+        window.location.reload();
+      }
+    } catch {
+      // ignore — caller can surface a toast if needed
+    }
+  }
 
   function callbackUrl(): string {
     // Hash-route callback so SPA can parse fragment tokens.
@@ -237,5 +269,5 @@ export function useAuth({
     window.location.href = "https://bsvibe.dev/";
   }
 
-  return { user, loading, login, signup, logout };
+  return { user, loading, login, signup, logout, tenants, switchTenant };
 }

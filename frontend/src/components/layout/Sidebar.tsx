@@ -4,6 +4,7 @@ import {
   LanguageToggle,
   ResponsiveSidebar,
   SidebarBrand,
+  SidebarTenantSwitcher,
   SidebarUserCard,
   type SidebarItem,
 } from "@bsvibe/layout";
@@ -39,7 +40,7 @@ interface SidebarProps {
  */
 export function Sidebar({ currentHash, isOpen, onOpenChange, onClose }: SidebarProps) {
   const { t, i18n } = useTranslation();
-  const { user, logout } = useAuth();
+  const { user, logout, tenants, switchTenant } = useAuth();
   const userEmail = user?.email ?? "";
   const currentLang = (i18n.resolvedLanguage ?? i18n.language) as SupportedLang;
 
@@ -114,6 +115,12 @@ export function Sidebar({ currentHash, isOpen, onOpenChange, onClose }: SidebarP
 
   const footer = (
     <div className="flex flex-col gap-2">
+      <SidebarTenantSwitcher
+        tenants={tenants}
+        activeTenantId={user?.tenantId ?? null}
+        onSwitchTenant={(id) => void switchTenant(id)}
+        dataTestId="sidebar-tenant-switcher"
+      />
       <LanguageToggle
         value={currentLang}
         options={SUPPORTED_LANGS.map((l) => ({ value: l, label: l.toUpperCase() }))}
