@@ -220,21 +220,9 @@
   font-weight: 600;
 }
 
-/* The shared `ResponsiveSidebar` puts the mobile hamburger trigger at
- * the document root with no z-index, while the drawer `<aside>` lives
- * at z-40 (translated off-screen when closed). On mobile (md:hidden)
- * the trigger needs to sit above the drawer's offscreen bbox so
- * Playwright / users can actually tap it. Promote the hamburger to
- * z-50 + position fixed at the same top-left as BSage's own legacy
- * trigger so visual placement matches the rest of the chrome. */
-@media (max-width: 767px) {
-  .bsvibe-sidebar__hamburger {
-    position: fixed;
-    top: 0.75rem;
-    left: 1rem;
-    z-index: 50;
-  }
-}
+/* Hamburger positioning now ships from @bsvibe/layout v0.5.0
+ * (`fixed top-3 left-3 z-50` baked into the lib's Tailwind classes).
+ * Per-product override removed — lib is the SoT. */
 
 /* ----------------------------------------------------------------------
  * Phase B (Batch 2) — mobile-friendly responsive utilities.
