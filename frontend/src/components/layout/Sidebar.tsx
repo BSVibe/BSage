@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  LanguageToggle,
   ResponsiveSidebar,
   SidebarBrand,
   SidebarUserCard,
   type SidebarItem,
 } from "@bsvibe/layout";
 import { useAuth } from "../../hooks/useAuth";
+import { setLanguage, SUPPORTED_LANGS, type SupportedLang } from "../../i18n";
 import { Icon } from "../common/Icon";
 
 interface SidebarProps {
@@ -36,9 +38,10 @@ interface SidebarProps {
  * `border-l-4 border-[var(--color-accent)]` pattern.
  */
 export function Sidebar({ currentHash, isOpen, onOpenChange, onClose }: SidebarProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { user, logout } = useAuth();
   const userEmail = user?.email ?? "";
+  const currentLang = (i18n.resolvedLanguage ?? i18n.language) as SupportedLang;
 
   // Track desktop viewport so the sidebar is always rendered as visible
   // (and not flagged `aria-hidden=true`) on `md:` and up. Without this,
@@ -108,13 +111,22 @@ export function Sidebar({ currentHash, isOpen, onOpenChange, onClose }: SidebarP
   );
 
   const footer = (
-    <SidebarUserCard
-      email={userEmail}
-      onSignOut={() => {
-        void logout();
-      }}
-      signOutLabel={t("nav.signOut")}
-    />
+    <div className="flex flex-col gap-2">
+      <LanguageToggle
+        value={currentLang}
+        options={SUPPORTED_LANGS.map((l) => ({ value: l, label: l.toUpperCase() }))}
+        onChange={(next) => setLanguage(next as SupportedLang)}
+        ariaLabel={t("header.language")}
+        dataTestId="lang-switcher"
+      />
+      <SidebarUserCard
+        email={userEmail}
+        onSignOut={() => {
+          void logout();
+        }}
+        signOutLabel={t("nav.signOut")}
+      />
+    </div>
   );
 
   return (
