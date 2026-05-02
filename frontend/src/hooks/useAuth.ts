@@ -11,6 +11,7 @@ import type { User as SharedUser } from "@bsvibe/types";
 // `Tenant` from `@bsvibe/types` and this local extension goes away.
 interface User extends SharedUser {
   tenantId: string;
+  tenantName: string | null;
   role: string;
 }
 
@@ -24,10 +25,18 @@ const LS_ACCESS_TOKEN = "bsage_access_token";
 const LS_REFRESH_TOKEN = "bsage_refresh_token";
 const LS_EXPIRES_AT = "bsage_expires_at";
 
+interface SessionTenant {
+  id: string;
+  name: string;
+  role?: string;
+}
+
 interface SessionResponse {
   access_token: string;
   refresh_token: string;
   expires_in: number;
+  tenants?: SessionTenant[];
+  active_tenant_id?: string;
 }
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
@@ -173,10 +182,26 @@ export function useAuth({
       }
       const payload = decodeJwt(token);
       const appMeta = payload.app_metadata as Record<string, string> | undefined;
+      const tenantId = appMeta?.tenant_id ?? "";
+      // Tenant name comes from the auth-app session response — pull it once
+      // post-auth so the sidebar tagline can show the active workspace.
+      // Fetch is best-effort; on failure we leave tenantName null.
+      let tenantName: string | null = null;
+      try {
+        const res = await fetch(`${AUTH_URL}/api/session`, { credentials: "include" });
+        if (res.ok) {
+          const data: SessionResponse = await res.json();
+          const activeId = data.active_tenant_id ?? tenantId;
+          tenantName = data.tenants?.find((t) => t.id === activeId)?.name ?? null;
+        }
+      } catch {
+        // ignore; tenantName stays null
+      }
       setUser({
         id: payload.sub as string,
         email: payload.email as string,
-        tenantId: appMeta?.tenant_id ?? "",
+        tenantId,
+        tenantName,
         role: appMeta?.role ?? "member",
       });
       setLoading(false);

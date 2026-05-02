@@ -105,7 +105,9 @@ export function Sidebar({ currentHash, isOpen, onOpenChange, onClose }: SidebarP
         </span>
       }
       name="BSage"
-      tagline="The Kinetic Archivist"
+      // Show the active workspace name (tenant). Collapses when not yet
+      // known — unified with the other 3 products.
+      tagline={user?.tenantName ?? undefined}
       href="#/"
     />
   );
