@@ -3,12 +3,12 @@ FROM python:3.11-slim AS backend
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
-# Install uv + node (for frontend build)
+# Backend image carries Python only — frontend ships from Vercel
+# (sage.bsvibe.dev) so we don't bundle/build it here. Avoids the
+# private GitHub Packages auth dance during docker build.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy application code first (needed for package build)
@@ -19,11 +19,6 @@ COPY skills/ ./skills/
 
 # Install Python dependencies
 RUN uv pip install --system --no-cache .
-
-# Build frontend
-COPY frontend/ ./frontend/
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate \
-    && cd frontend && CI=true pnpm install --frozen-lockfile && pnpm run build
 
 ENV PYTHONPATH=/app
 
