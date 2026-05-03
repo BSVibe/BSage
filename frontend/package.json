@@ -20,6 +20,8 @@
     "@bsvibe/layout": "^0.7.0",
     "@bsvibe/types": "0.1.0",
     "@thecae/remark-obsidian": "^1.1.1",
+    "@types/d3-force": "^3.0.10",
+    "d3-force": "^3.0.0",
     "i18next": "^26.0.3",
     "lucide-react": "^0.575.0",
     "next": "^15.0.0",

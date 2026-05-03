@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
+import { forceCollide } from "d3-force";
 import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
 import remarkGfm from "remark-gfm";
@@ -7,6 +8,15 @@ import remarkObsidian from "@thecae/remark-obsidian";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkWikiLink from "../../lib/remarkWikiLink";
+import {
+  buildNodeCommunityIdMap,
+  computeCommunityCentroids,
+  computeDegree,
+  labelDegreeThreshold,
+  labelHalfWidth,
+  nodeRadius,
+  shouldShowLabel,
+} from "../../lib/graphPhysics";
 import { api } from "../../api/client";
 import type { VaultGraph, VaultGraphNode, VaultBacklink, VaultCommunity } from "../../api/types";
 import { Icon } from "../common/Icon";
@@ -89,6 +99,8 @@ export function KnowledgeGraphView() {
   const [communities, setCommunities] = useState<VaultCommunity[]>([]);
   const [colorMode, setColorMode] = useState<"group" | "community">("group");
   const containerRef = useRef<HTMLDivElement>(null);
+  const fgRef = useRef<unknown>(null);
+  const labelWidthCacheRef = useRef<Map<string, number>>(new Map());
   const [dimensions, setDimensions] = useState<{
     width: number;
     height: number;
@@ -191,13 +203,92 @@ export function KnowledgeGraphView() {
     });
     const nodeIds = new Set(nodes.map((n) => n.id));
     const links = graphData.links.filter(
-      (l) => nodeIds.has(l.source) && nodeIds.has(l.target),
+      (l) => nodeIds.has(l.source as string) && nodeIds.has(l.target as string),
     );
     return {
       nodes: nodes.map((n) => ({ ...n })),
       links: links.map((l) => ({ ...l })),
     };
   }, [graphData, activeFilters, searchQuery]);
+
+  // Degree map + LOD threshold derived once per filter change.
+  const degreeMap = useMemo(
+    () => computeDegree(filteredData?.links ?? []),
+    [filteredData],
+  );
+  const hubThreshold = useMemo(
+    () => labelDegreeThreshold(degreeMap, 0.05),
+    [degreeMap],
+  );
+  const nodeCommunityIdMap = useMemo(
+    () => buildNodeCommunityIdMap(communities),
+    [communities],
+  );
+
+  // Wire custom d3 forces once the simulation is mounted. Re-runs whenever
+  // the underlying data changes so collide radii reflect new degrees.
+  useEffect(() => {
+    const fg = fgRef.current as
+      | {
+          d3Force: (
+            name: string,
+            force?: unknown,
+          ) => unknown;
+        }
+      | null;
+    if (!fg || !filteredData) return;
+
+    // Modify built-in forces in place — react-force-graph creates default
+    // 'charge' and 'link' forces internally. Replacing them entirely (esp.
+    // the link force) breaks its internal id-resolution and the canvas
+    // never paints. Only mutate properties.
+    const charge = fg.d3Force("charge") as
+      | { strength: (s: number) => unknown; theta?: (t: number) => unknown }
+      | undefined;
+    if (charge) {
+      charge.strength(-160);
+      charge.theta?.(0.9);
+    }
+    const linkForce = fg.d3Force("link") as
+      | { distance: (d: number) => unknown; strength: (s: number) => unknown }
+      | undefined;
+    if (linkForce) {
+      linkForce.distance(40);
+      linkForce.strength(0.4);
+    }
+    fg.d3Force(
+      "collide",
+      forceCollide()
+        .radius((d) => {
+          const id = (d as unknown as { id?: string }).id;
+          const deg = (id && degreeMap[id]) || 0;
+          return nodeRadius(deg, false) + 8;
+        })
+        .iterations(1),
+    );
+
+    // Custom 'cluster' force: pull each node toward its community centroid.
+    const clusterForce = (alpha: number) => {
+      if (communities.length === 0 || !filteredData) return;
+      const centroids = computeCommunityCentroids(filteredData.nodes, communities);
+      const strength = 0.05 * alpha;
+      for (const n of filteredData.nodes as Array<{
+        id: string;
+        x?: number;
+        y?: number;
+        vx?: number;
+        vy?: number;
+      }>) {
+        const cid = nodeCommunityIdMap.get(n.id);
+        if (cid === undefined) continue;
+        const c = centroids.get(cid);
+        if (!c || n.x === undefined || n.y === undefined) continue;
+        n.vx = (n.vx ?? 0) + (c.x - n.x) * strength;
+        n.vy = (n.vy ?? 0) + (c.y - n.y) * strength;
+      }
+    };
+    fg.d3Force("cluster", clusterForce);
+  }, [filteredData, degreeMap, communities, nodeCommunityIdMap]);
 
   const handleNodeClick = useCallback(async (node: { id?: string; name?: string; group?: string }) => {
     if (!node.id) return;
@@ -230,7 +321,8 @@ export function KnowledgeGraphView() {
           ? communityColorMap[rawNode.id as string]
           : groupColorMap[group] ?? FALLBACK_COLOR;
       const isSelected = selectedNode?.id === rawNode.id;
-      const radius = isSelected ? 7 : 4;
+      const degree = (rawNode.id && degreeMap[rawNode.id]) || 0;
+      const radius = nodeRadius(degree, isSelected);
 
       // Glow for selected node
       if (isSelected) {
@@ -273,14 +365,19 @@ export function KnowledgeGraphView() {
         ctx.stroke();
       }
 
-      // Label
+      // LOD label — only render when zoomed in OR for hub nodes/selected.
+      if (!isSelected && !shouldShowLabel(globalScale, degree, hubThreshold)) {
+        return;
+      }
+      // Warm the label-width cache so collide force has consistent sizing.
+      labelHalfWidth(label, ctx, labelWidthCacheRef.current, fontSize);
       ctx.font = `${fontSize}px "Plus Jakarta Sans", sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
       ctx.fillStyle = isSelected ? "#f2f3f7" : "#86948a";
       ctx.fillText(label, x, y + radius + 2);
     },
-    [selectedNode, colorMode, communityColorMap, groupColorMap],
+    [selectedNode, colorMode, communityColorMap, groupColorMap, degreeMap, hubThreshold],
   );
 
   const parsed = useMemo(() => {
@@ -359,6 +456,7 @@ export function KnowledgeGraphView() {
             )}
           {showGraph && (
             <ForceGraph2D
+              ref={fgRef as never}
               graphData={filteredData}
               width={dimensions.width}
               height={dimensions.height}
@@ -368,14 +466,17 @@ export function KnowledgeGraphView() {
               linkWidth={1.5}
               linkDirectionalParticles={1}
               linkDirectionalParticleWidth={2}
-              nodePointerAreaPaint={(node: { x?: number; y?: number }, color, ctx) => {
+              nodePointerAreaPaint={(node: { x?: number; y?: number; id?: string }, color, ctx) => {
+                const deg = (node.id && degreeMap[node.id]) || 0;
+                const r = nodeRadius(deg, false) + 4;
                 ctx.beginPath();
-                ctx.arc(node.x ?? 0, node.y ?? 0, 8, 0, 2 * Math.PI);
+                ctx.arc(node.x ?? 0, node.y ?? 0, r, 0, 2 * Math.PI);
                 ctx.fillStyle = color;
                 ctx.fill();
               }}
-              d3VelocityDecay={0.3}
-              cooldownTicks={200}
+              d3VelocityDecay={0.4}
+              warmupTicks={60}
+              cooldownTicks={120}
               enableNodeDrag={true}
               enableZoomInteraction={true}
             />
