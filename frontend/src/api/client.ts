@@ -100,6 +100,39 @@ export const api = {
       body: JSON.stringify({ credentials }),
     }),
 
+  // Generic file upload (Phase 2a). Returns upload_id + path that
+  // plugin invocations can pick up via input_data.upload_id.
+  uploadFile: async (file: File): Promise<{
+    upload_id: string;
+    path: string;
+    filename: string;
+    expires_at: string;
+  }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const token = getAccessToken();
+    const resp = await fetch(`${BASE}/uploads`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`Upload failed (${resp.status}): ${text || resp.statusText}`);
+    }
+    return resp.json();
+  },
+
+  // Run a plugin with a JSON input payload (e.g. {upload_id}). Wraps the
+  // existing /run/{name} endpoint with a body, since `run()` above is
+  // body-less.
+  runWithInput: (name: string, input: Record<string, unknown>) =>
+    request<{ name: string; results: unknown[] }>(`/run/${name}`, {
+      method: "POST",
+      body: JSON.stringify(input),
+      headers: { "Content-Type": "application/json" },
+    }),
+
   // Enable/Disable toggle
   toggleEntry: (name: string) =>
     request<{ name: string; enabled: boolean }>(`/entries/${name}/toggle`, { method: "POST" }),

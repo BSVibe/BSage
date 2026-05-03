@@ -7,12 +7,13 @@ import contextlib
 import json
 import os
 import re
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -1292,6 +1293,63 @@ def create_routes(state: AppState) -> APIRouter:
     async def list_sync_backends(_perm: None = Depends(config_read)) -> list[str]:
         """Return names of registered sync backends."""
         return state.sync_manager.list_backends()
+
+    # -- Generic file upload (Phase 2a) --------------------------------------
+
+    _max_upload_bytes = 50 * 1024 * 1024  # 50 MB
+    _upload_ttl_seconds = 3600  # 1 h — caller responsible for prompt consumption
+
+    @protected.post("/uploads")
+    async def upload_file(
+        file: UploadFile = File(...),
+        principal: Any = Depends(_principal),
+    ) -> dict[str, str]:
+        """Accept a single file and stash it in a tenant-scoped temp dir.
+
+        Returns ``upload_id`` + absolute ``path``. Plugins read the file by
+        passing ``upload_id`` (or ``path``) in their ``input_data`` payload
+        when triggered via ``POST /api/run/{name}``.
+        """
+        tenant = _principal_tenant(principal) or "anonymous"
+        upload_id = uuid.uuid4().hex
+
+        raw_name = file.filename or "upload"
+        safe_name = Path(raw_name).name  # strips any '..' / path components
+        if not safe_name or safe_name in (".", ".."):
+            safe_name = "upload"
+
+        upload_root = state.vault.root.parent / "uploads" / tenant / upload_id
+        upload_root.mkdir(parents=True, exist_ok=True)
+        dest = upload_root / safe_name
+
+        written = 0
+        try:
+            with dest.open("wb") as out:
+                while True:
+                    chunk = await file.read(64 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > _max_upload_bytes:
+                        out.close()
+                        with contextlib.suppress(OSError):
+                            dest.unlink()
+                            upload_root.rmdir()
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"File exceeds {_max_upload_bytes // (1024 * 1024)}MB limit",
+                        )
+                    out.write(chunk)
+        finally:
+            await file.close()
+
+        expires_at = (datetime.now(tz=UTC) + timedelta(seconds=_upload_ttl_seconds)).isoformat()
+        return {
+            "upload_id": upload_id,
+            "path": str(dest),
+            "filename": safe_name,
+            "expires_at": expires_at,
+        }
 
     parent = APIRouter()
     parent.include_router(public)
