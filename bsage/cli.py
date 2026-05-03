@@ -443,3 +443,49 @@ def health(host: str | None, port: int | None) -> None:
 
     data = response.json()
     click.echo(f"Gateway status: {data.get('status', 'unknown')}")
+
+
+# -- MCP --------------------------------------------------------------------
+
+
+@main.group()
+def mcp() -> None:
+    """MCP (Model Context Protocol) commands."""
+
+
+@mcp.command("serve")
+def mcp_serve() -> None:
+    """Run the BSage MCP server over stdio (for Claude Desktop, Cursor, etc.).
+
+    Configure your MCP client with this command as the executable so it
+    can read/write the BSage vault through the standard MCP protocol.
+    """
+    from bsage.mcp.stdio import main as stdio_main
+
+    stdio_main()
+
+
+@main.command("search")
+@click.argument("query")
+@click.option("--top-k", default=10, type=int)
+@click.option("--host", default=None)
+@click.option("--port", default=None, type=int)
+def cli_search(query: str, top_k: int, host: str | None, port: int | None) -> None:
+    """Vault search via the running gateway."""
+    settings = get_settings()
+    h = _connect_host(host or settings.gateway_host)
+    base = f"http://{h}:{port or settings.gateway_port}"
+    try:
+        resp = httpx.post(
+            f"{base}/api/mcp/search_knowledge",
+            json={"query": query, "top_k": top_k},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    data = resp.json()
+    for r in data.get("results", []):
+        click.echo(f"{r.get('score', 0):.2f}  {r.get('path') or '-'}  {r.get('title', '')}")

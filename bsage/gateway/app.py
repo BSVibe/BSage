@@ -21,6 +21,7 @@ from bsage.gateway.mcp import create_mcp_routes
 from bsage.gateway.rate_limit import RateLimiter, RateLimitMiddleware
 from bsage.gateway.routes import create_routes
 from bsage.gateway.ws import create_ws_routes
+from bsage.mcp.sse import create_sse_routes
 
 logger = structlog.get_logger(__name__)
 
@@ -85,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Register API + MCP + WebSocket routes
     app.include_router(create_routes(state))
     app.include_router(create_mcp_routes(state))
+    app.include_router(create_sse_routes(state))
     app.include_router(
         create_ws_routes(
             approval_interface=state.ws_approval_interface,

@@ -29,6 +29,7 @@ dependencies = [
     "python-dateutil>=2.9.0.post0",
     "networkx>=3.0",
     "cryptography>=43.0.0",
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +44,7 @@ all-plugins = ["boto3>=1.28.0", "python-dateutil>=2.8.0"]
 
 [project.scripts]
 bsage = "bsage.cli:main"
+bsage-mcp = "bsage.mcp.stdio:main"
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -64,6 +66,7 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "A", "SIM"]
 # FastAPI explicitly expects this pattern.
 "bsage/gateway/routes.py" = ["B008"]
 "bsage/gateway/authz.py" = ["B008"]
+"bsage/mcp/sse.py" = ["B008"]
 
 [tool.coverage.run]
 source = ["bsage"]
