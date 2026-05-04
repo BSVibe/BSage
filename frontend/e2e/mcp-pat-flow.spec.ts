@@ -3,8 +3,12 @@
  * Run via:
  *   pnpm test:e2e e2e/mcp-pat-flow.spec.ts --project=chromium
  *
+ * MCP lives in Settings (not Plugins) — MCP is the inbound interface
+ * for external AI clients, not an internal BSage tool. Slack / Email
+ * etc. that BSage polls remain plugins.
+ *
  * Covers:
- *  - Plugins page renders the BSage MCP Server virtual card
+ *  - Settings page renders the MCP Server section
  *  - Click → modal opens with empty keys state
  *  - Generate a new key → POST hits, raw token shown ONCE
  *  - Token auto-injects into Cursor / Claude Desktop snippets
@@ -22,7 +26,8 @@ type StoredKey = {
 };
 
 const test = base.extend<{ pat: { keys: StoredKey[] } }>({
-  pat: async ({ page }, use) => {
+  // Renamed `use` → `provide` so eslint doesn't mistake it for React's `use()` hook.
+  pat: async ({ page }, provide) => {
     const store: { keys: StoredKey[] } = { keys: [] };
 
     await page.route("**/api/mcp/api-keys", async (route) => {
@@ -67,18 +72,18 @@ const test = base.extend<{ pat: { keys: StoredKey[] } }>({
       return route.fallback();
     });
 
-    await use(store);
+    await provide(store);
   },
 });
 
-test.describe("MCP PAT flow — Plugins MCP card → Setup modal", () => {
+test.describe("MCP PAT flow — Settings MCP section → Setup modal", () => {
   test.beforeEach(async ({ pat }) => {
     void pat; // route handlers installed by fixture
   });
 
-  test("card → modal → empty state → tabs render", async ({ page }) => {
-    await page.goto("/#/plugins");
-    await page.locator('[data-testid="mcp-server-card"]').waitFor();
+  test("section → modal → empty state → tabs render", async ({ page }) => {
+    await page.goto("/#/settings");
+    await page.locator('[data-testid="mcp-server-section"]').waitFor();
     await page.getByRole("button", { name: /Manage keys & connect/ }).click();
 
     await expect(page.getByText("Active keys")).toBeVisible();
@@ -91,7 +96,7 @@ test.describe("MCP PAT flow — Plugins MCP card → Setup modal", () => {
   test("generate new key → token shown once + auto-injected into snippet", async ({
     page,
   }) => {
-    await page.goto("/#/plugins");
+    await page.goto("/#/settings");
     await page.getByRole("button", { name: /Manage keys & connect/ }).click();
 
     await page.getByPlaceholder("Name (e.g. cursor-laptop)").fill("my-cursor");
@@ -112,7 +117,7 @@ test.describe("MCP PAT flow — Plugins MCP card → Setup modal", () => {
   });
 
   test("switch to Claude Desktop tab → mcp-proxy bridge config", async ({ page }) => {
-    await page.goto("/#/plugins");
+    await page.goto("/#/settings");
     await page.getByRole("button", { name: /Manage keys & connect/ }).click();
     await page.getByPlaceholder("Name (e.g. cursor-laptop)").fill("desktop");
     await page.getByRole("button", { name: /\+ Generate/ }).click();
@@ -125,7 +130,7 @@ test.describe("MCP PAT flow — Plugins MCP card → Setup modal", () => {
   });
 
   test("revoke removes key from active list", async ({ page }) => {
-    await page.goto("/#/plugins");
+    await page.goto("/#/settings");
     await page.getByRole("button", { name: /Manage keys & connect/ }).click();
     await page.getByPlaceholder("Name (e.g. cursor-laptop)").fill("revoke-me");
     await page.getByRole("button", { name: /\+ Generate/ }).click();
@@ -138,7 +143,7 @@ test.describe("MCP PAT flow — Plugins MCP card → Setup modal", () => {
   });
 
   test("modal closes on backdrop click + reopens", async ({ page }) => {
-    await page.goto("/#/plugins");
+    await page.goto("/#/settings");
     await page.getByRole("button", { name: /Manage keys & connect/ }).click();
     // "Generate new key" only renders inside the modal — uniquely identifies it
     await expect(page.getByText("Generate new key")).toBeVisible();
@@ -155,7 +160,7 @@ test.describe("Visual snapshots for new MCP card + modal", () => {
   test("modal with fresh token — desktop", async ({ page, pat }) => {
     void pat; // fixture installs the routes
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto("/#/plugins");
+    await page.goto("/#/settings");
     await page.getByRole("button", { name: /Manage keys & connect/ }).click();
     await page.getByPlaceholder("Name (e.g. cursor-laptop)").fill("demo");
     await page.getByRole("button", { name: /\+ Generate/ }).click();
@@ -166,7 +171,7 @@ test.describe("Visual snapshots for new MCP card + modal", () => {
   test("modal — mobile", async ({ page, pat }) => {
     void pat;
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/#/plugins");
+    await page.goto("/#/settings");
     await page.getByRole("button", { name: /Manage keys & connect/ }).click();
     await page.waitForSelector("text=Active keys");
     await page.screenshot({ path: "test-results/visual/mcp-modal-mobile.png" });

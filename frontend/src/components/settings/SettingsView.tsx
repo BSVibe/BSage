@@ -6,6 +6,7 @@ import type { LlmTestResult, RuntimeConfig } from "../../api/types";
 import { useAuth } from "../../hooks/useAuth";
 import { Icon } from "../common/Icon";
 import { Toggle } from "../common/Toggle";
+import { McpServerSetupModal } from "../plugins/McpServerSetupModal";
 
 export function SettingsView() {
   const { t } = useTranslation();
@@ -264,10 +265,7 @@ export function SettingsView() {
           </section>
         )}
 
-        {/* MCP Server section moved to Plugins page (BSage MCP Server card +
-            McpServerSetupModal). The setup flow there generates an API key
-            and shows ready-to-paste config snippets — better UX than the
-            old `YOUR_JWT_HERE` placeholder. */}
+        <McpServerSection />
 
         <section className="border-t border-white/5 pt-6">
           <h3 className="text-sm font-medium text-gray-300 mb-3">{t("settings.account")}</h3>
@@ -281,5 +279,65 @@ export function SettingsView() {
         </section>
       </div>
     </div>
+  );
+}
+
+function McpServerSection() {
+  const [open, setOpen] = useState(false);
+  const [keyCount, setKeyCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    // setTimeout(0) defers setState out of the synchronous effect body —
+    // satisfies React 19's set-state-in-effect rule.
+    const id = window.setTimeout(() => {
+      api.mcpKeys
+        .list()
+        .then((ks) => setKeyCount(ks.length))
+        .catch(() => setKeyCount(0));
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [open]);
+
+  const status =
+    keyCount === null
+      ? "Loading…"
+      : keyCount === 0
+        ? "No keys yet"
+        : `${keyCount} active key${keyCount === 1 ? "" : "s"}`;
+
+  return (
+    <>
+      <section
+        data-testid="mcp-server-section"
+        className="border-t border-white/5 pt-6"
+      >
+        <h3 className="text-sm font-medium text-gray-300 mb-3">MCP Server</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Let Claude Desktop, Cursor, Codex CLI and other AI clients use your
+          BSage vault — search, read notes, run import plugins. MCP is the
+          inbound channel for external AI; for outbound integrations
+          (Slack, email, etc.) use Plugins.
+        </p>
+        <div className="flex items-center justify-between gap-4 px-4 py-3 rounded-lg bg-surface-container-low border border-white/5">
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                keyCount && keyCount > 0 ? "bg-accent-light" : "bg-gray-500"
+              }`}
+            />
+            <span className="text-xs text-gray-300 truncate">{status}</span>
+          </div>
+          <button
+            onClick={() => setOpen(true)}
+            className="min-h-10 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-accent-light/15 text-accent-light hover:bg-accent-light/25 transition-colors font-bold"
+          >
+            <Icon name="settings" size={14} />
+            Manage keys & connect
+          </button>
+        </div>
+      </section>
+
+      {open && <McpServerSetupModal onClose={() => setOpen(false)} />}
+    </>
   );
 }
