@@ -6,6 +6,7 @@ import type { LlmTestResult, RuntimeConfig } from "../../api/types";
 import { useAuth } from "../../hooks/useAuth";
 import { Icon } from "../common/Icon";
 import { Toggle } from "../common/Toggle";
+import { McpServerSetupModal } from "../plugins/McpServerSetupModal";
 
 export function SettingsView() {
   const { t } = useTranslation();
@@ -264,7 +265,7 @@ export function SettingsView() {
           </section>
         )}
 
-        <McpConnectionInfo />
+        <McpServerSection />
 
         <section className="border-t border-white/5 pt-6">
           <h3 className="text-sm font-medium text-gray-300 mb-3">{t("settings.account")}</h3>
@@ -281,89 +282,62 @@ export function SettingsView() {
   );
 }
 
-function McpConnectionInfo() {
-  const [copied, setCopied] = useState<string | null>(null);
+function McpServerSection() {
+  const [open, setOpen] = useState(false);
+  const [keyCount, setKeyCount] = useState<number | null>(null);
 
-  const sseUrl = `${window.location.origin}/api/mcp/sse`;
-  const claudeDesktopConfig = JSON.stringify(
-    {
-      mcpServers: {
-        bsage: {
-          command: "bsage-mcp",
-        },
-      },
-    },
-    null,
-    2,
-  );
+  useEffect(() => {
+    // setTimeout(0) defers setState out of the synchronous effect body —
+    // satisfies React 19's set-state-in-effect rule.
+    const id = window.setTimeout(() => {
+      api.mcpKeys
+        .list()
+        .then((ks) => setKeyCount(ks.length))
+        .catch(() => setKeyCount(0));
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [open]);
 
-  const copy = async (key: string, text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(key);
-      window.setTimeout(() => setCopied((k) => (k === key ? null : k)), 1500);
-    } catch {
-      // clipboard blocked — user can copy manually
-    }
-  };
+  const status =
+    keyCount === null
+      ? "Loading…"
+      : keyCount === 0
+        ? "No keys yet"
+        : `${keyCount} active key${keyCount === 1 ? "" : "s"}`;
 
   return (
-    <section className="border-t border-white/5 pt-6">
-      <h3 className="text-sm font-medium text-gray-300 mb-3">MCP Server</h3>
-      <p className="text-xs text-gray-500 mb-3">
-        BSage exposes its tools through the standard Model Context Protocol so
-        Claude Desktop, Cursor and other MCP-aware clients can read and write
-        the vault.
-      </p>
-
-      <div className="space-y-3">
-        <div>
-          <div className="text-xs text-gray-400 mb-1.5">stdio (Claude Desktop, Cursor local)</div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 min-h-10 inline-flex items-center px-3 py-2 text-xs font-mono text-gray-200 bg-gray-850 border border-gray-700 rounded-lg">
-              bsage-mcp
-            </code>
-            <button
-              onClick={() => copy("cmd", "bsage-mcp")}
-              className="min-h-10 px-3 py-2 text-xs rounded-lg border border-gray-700 bg-gray-850 text-gray-200 hover:bg-gray-800 transition-colors"
-            >
-              {copied === "cmd" ? "Copied" : "Copy"}
-            </button>
+    <>
+      <section
+        data-testid="mcp-server-section"
+        className="border-t border-white/5 pt-6"
+      >
+        <h3 className="text-sm font-medium text-gray-300 mb-3">MCP Server</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Let Claude Desktop, Cursor, Codex CLI and other AI clients use your
+          BSage vault — search, read notes, run import plugins. MCP is the
+          inbound channel for external AI; for outbound integrations
+          (Slack, email, etc.) use Plugins.
+        </p>
+        <div className="flex items-center justify-between gap-4 px-4 py-3 rounded-lg bg-surface-container-low border border-white/5">
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                keyCount && keyCount > 0 ? "bg-accent-light" : "bg-gray-500"
+              }`}
+            />
+            <span className="text-xs text-gray-300 truncate">{status}</span>
           </div>
-        </div>
-
-        <div>
-          <div className="text-xs text-gray-400 mb-1.5">Claude Desktop config snippet</div>
-          <pre className="text-xs font-mono text-gray-200 bg-gray-850 border border-gray-700 rounded-lg p-3 overflow-x-auto">
-            {claudeDesktopConfig}
-          </pre>
           <button
-            onClick={() => copy("json", claudeDesktopConfig)}
-            className="mt-2 min-h-10 px-3 py-1.5 text-xs rounded-lg border border-gray-700 bg-gray-850 text-gray-200 hover:bg-gray-800 transition-colors"
+            onClick={() => setOpen(true)}
+            className="min-h-10 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-accent-light/15 text-accent-light hover:bg-accent-light/25 transition-colors font-bold"
           >
-            {copied === "json" ? "Copied" : "Copy JSON"}
+            <Icon name="settings" size={14} />
+            Manage keys & connect
           </button>
         </div>
+      </section>
 
-        <div>
-          <div className="text-xs text-gray-400 mb-1.5">SSE endpoint (remote clients)</div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 min-h-10 inline-flex items-center px-3 py-2 text-xs font-mono text-gray-200 bg-gray-850 border border-gray-700 rounded-lg break-all">
-              {sseUrl}
-            </code>
-            <button
-              onClick={() => copy("sse", sseUrl)}
-              className="min-h-10 px-3 py-2 text-xs rounded-lg border border-gray-700 bg-gray-850 text-gray-200 hover:bg-gray-800 transition-colors"
-            >
-              {copied === "sse" ? "Copied" : "Copy"}
-            </button>
-          </div>
-          <p className="text-[10px] text-gray-600 mt-1.5">
-            EventSource cannot send Authorization headers — append{" "}
-            <code className="text-gray-400">?token=&lt;jwt&gt;</code> for browser clients.
-          </p>
-        </div>
-      </div>
-    </section>
+      {open && <McpServerSetupModal onClose={() => setOpen(false)} />}
+    </>
   );
 }

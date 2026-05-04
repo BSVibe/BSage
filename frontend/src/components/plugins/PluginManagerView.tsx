@@ -277,6 +277,7 @@ export function PluginManagerView() {
         />
       )}
 
+
       {/* Background glow */}
       <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-accent-light/5 rounded-full blur-[120px] -z-10 translate-x-1/2 translate-y-1/2 pointer-events-none" />
     </div>
