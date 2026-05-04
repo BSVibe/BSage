@@ -85,6 +85,13 @@ class Settings(BsvibeSettings):
     # Authentication (BSVibe)
     bsvibe_auth_url: str = "https://auth.bsvibe.dev"
 
+    # OAuth2 client_credentials grant — see BSVibe-Auth `/api/oauth/token`.
+    # Optional; needed only when BSage initiates service-to-service calls.
+    # Each backend has a dedicated row in `oauth_clients`; the secret is
+    # provisioned once and stored in Vaultwarden.
+    bsvibe_client_id: str = ""
+    bsvibe_client_secret: str = ""
+
     # Service-to-service API keys (JSON: {"service-name": "key"})
     # DEPRECATED Phase 0 P0.5+: use service JWTs (audience=bsage) instead.
     # Kept so existing deployments don't 401 mid-rollout.
