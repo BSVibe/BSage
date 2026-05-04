@@ -99,6 +99,65 @@ test.describe("Node Inspector sidebar", () => {
   });
 });
 
+test.describe("Large graph rendering (Phase 1: physics + LOD)", () => {
+  test("renders without errors on 200-node graph", async ({ page }) => {
+    // Generate 200 mock nodes split across 3 groups + dense link set
+    const nodes = Array.from({ length: 200 }, (_, i) => ({
+      id: `garden/n${i}.md`,
+      name: `Note ${i}`,
+      group: i % 3 === 0 ? "garden" : i % 3 === 1 ? "seeds" : "actions",
+    }));
+    const links = Array.from({ length: 350 }, (_, i) => ({
+      source: `garden/n${i % 200}.md`,
+      target: `garden/n${(i * 7 + 3) % 200}.md`,
+    }));
+
+    await page.route("**/api/vault/graph", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ nodes, links, truncated: false }),
+      }),
+    );
+    await page.route("**/api/vault/communities**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          communities: [
+            { id: 0, label: "cluster a", size: 67, cohesion: 0.8, members: nodes.slice(0, 67).map((n) => n.id), color: "#4edea3" },
+            { id: 1, label: "cluster b", size: 67, cohesion: 0.7, members: nodes.slice(67, 134).map((n) => n.id), color: "#adc6ff" },
+            { id: 2, label: "cluster c", size: 66, cohesion: 0.6, members: nodes.slice(134).map((n) => n.id), color: "#ffb95f" },
+          ],
+          algorithm: "louvain",
+          total: 3,
+        }),
+      }),
+    );
+
+    const consoleErrors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error") consoleErrors.push(msg.text());
+    });
+
+    await page.goto("/#/graph");
+    await expect(page.locator("canvas")).toBeVisible();
+    // Let the simulation cool down
+    await page.waitForTimeout(1500);
+
+    // Canvas drew something (non-zero dimensions)
+    const box = await page.locator("canvas").boundingBox();
+    expect(box?.width || 0).toBeGreaterThan(100);
+    expect(box?.height || 0).toBeGreaterThan(100);
+
+    // No fatal runtime errors from d3-force or the new helpers
+    const fatal = consoleErrors.filter(
+      (e) => !e.includes("favicon") && !e.includes("font") && !e.includes("WebSocket"),
+    );
+    expect(fatal).toEqual([]);
+  });
+});
+
 test.describe("Community visualization (Phase 1)", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/#/graph");
