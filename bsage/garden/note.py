@@ -15,47 +15,49 @@ from typing import Any
 
 import yaml
 
-_VALID_NOTE_TYPES: frozenset[str] = frozenset(
-    {"idea", "insight", "project", "event", "task", "fact", "person", "preference"}
-)
-"""Note types that ``GardenWriter.handle_write_note`` accepts as-is.
-
-Other values are silently coerced to ``"idea"`` for compatibility with older
-tool-call payloads.
-"""
-
-
 _MAX_ACTION_SUMMARY: int = 200
 """Cap on action-log summary length before truncation with an ellipsis."""
 
 
 @dataclass
 class GardenNote:
-    """Structured representation of a garden note (v2.2).
+    """Structured representation of a garden note.
+
+    Identity in this graph comes from what a note connects to (entities,
+    tags, community membership), not from a fixed ``note_type`` enum.
+    ``note_type`` is preserved as a deprecated optional field for one
+    minor cycle so existing vaults read back without crashing — new
+    writes leave it ``None`` and let tags + entities + maturity carry
+    the meaning instead.
 
     Attributes:
         title: Human-readable title for the note.
         content: Markdown body content.
-        note_type: Entity type (idea / insight / project / event / task / fact / etc.).
         source: Name of the skill or source that created this note.
-        related: List of untyped related note titles for ``related:`` field.
-        tags: List of tags for categorization.
+        note_type: DEPRECATED. Optional kind tag preserved for back-compat
+            with vaults from before the dynamic-ontology refactor; new
+            writes leave it ``None``.
+        tags: Free-form lowercase content tags (e.g. "self-hosting",
+            "reverse-proxy"). What the note is ABOUT, not what KIND it is.
+        entities: Wikilink targets (e.g. "[[Vaultwarden]]") extracted
+            from the content. Each must also appear as a wikilink in
+            ``content`` — auto-stub creation walks this list.
+        related: List of related note titles for ``related:`` field.
         confidence: Content confidence score (0.0-1.0).
         knowledge_layer: Knowledge layer classification.
         relations: Typed relations dict — key is relation type, value is list of targets.
                    Example: {"attendees": ["[[Alice]]"], "belongs_to": ["[[Project X]]"]}
         aliases: Alternative names for Obsidian search.
-        extra_fields: Additional frontmatter fields for specialized note types
-                      (fact: subject/predicate/object/valid_from/valid_to/supersedes/source_type,
-                       preference: subject/domain/context/source_type).
+        extra_fields: Additional frontmatter fields.
     """
 
     title: str
     content: str
-    note_type: str
     source: str
+    note_type: str | None = None
     related: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
     confidence: float = 0.9
     knowledge_layer: str = "semantic"
     relations: dict[str, list[str]] = field(default_factory=dict)
@@ -101,7 +103,6 @@ _build_frontmatter = build_frontmatter
 __all__ = [
     "GardenNote",
     "_MAX_ACTION_SUMMARY",
-    "_VALID_NOTE_TYPES",
     "_build_frontmatter",
     "_slugify",
     "build_frontmatter",

@@ -10,31 +10,41 @@ from __future__ import annotations
 
 from typing import Any
 
-from bsage.garden.note import _VALID_NOTE_TYPES
-
 WRITE_NOTE_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "write-note",
         "description": (
-            "Write a processed garden note — insights, analyzed conclusions, "
-            "or structured summaries. Use when the content has been refined "
-            "or the user asks for an insight/project note."
+            "Write a processed garden note. Use [[wikilinks]] in content "
+            "for any concept, person, tool, project, or organization — the "
+            "system auto-creates entity stubs. Tags describe what the note "
+            "is ABOUT (domain, topic), not what KIND it is."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "title": {"type": "string", "description": "Title of the note"},
-                "content": {"type": "string", "description": "Markdown body content"},
-                "note_type": {
+                "content": {
                     "type": "string",
-                    "enum": sorted(_VALID_NOTE_TYPES),
-                    "description": "Note category (default: idea)",
+                    "description": "Markdown body. Use [[wikilinks]] liberally.",
                 },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional tags for categorization",
+                    "maxItems": 5,
+                    "description": (
+                        "2-5 free-form lowercase content tags "
+                        '(e.g. "self-hosting", "reverse-proxy"). Avoid kind '
+                        'tags like "idea" / "fact" / "insight".'
+                    ),
+                },
+                "entities": {
+                    "type": "array",
+                    "items": {"type": "string", "pattern": r"^\[\[.+\]\]$"},
+                    "description": (
+                        "[[Name]] strings extracted from content. Each MUST "
+                        "appear as a wikilink in content."
+                    ),
                 },
             },
             "required": ["title", "content"],

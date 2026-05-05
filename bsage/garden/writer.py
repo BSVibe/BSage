@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from bsage.garden.note import (
     _MAX_ACTION_SUMMARY,
-    _VALID_NOTE_TYPES,
     GardenNote,
     _build_frontmatter,
     _slugify,
@@ -47,7 +46,6 @@ __all__ = [
     "WRITE_NOTE_TOOL",
     "WRITE_SEED_TOOL",
     "_MAX_ACTION_SUMMARY",
-    "_VALID_NOTE_TYPES",
     "_build_frontmatter",
     "_slugify",
     "build_frontmatter",

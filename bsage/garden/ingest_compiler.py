@@ -7,6 +7,7 @@ update/create related garden notes instead of waiting for scheduled skills.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -31,31 +32,116 @@ logger = structlog.get_logger(__name__)
 _DEFAULT_BATCH_CHAR_BUDGET = 5_000
 
 COMPILE_BATCH_SYSTEM_PROMPT = """\
-You are an ingest compiler for a personal knowledge base (Obsidian vault).
+You are an ingest compiler for a personal knowledge garden (Obsidian vault).
 
-You are given a BATCH of NEW seeds (numbered) plus EXISTING notes from the \
-vault. Produce a SINGLE consolidated plan that covers the entire batch.
+You receive:
+1. A BATCH of NEW seeds (numbered) — recently captured raw notes.
+2. EXISTING notes from the vault — context for deduplication.
+
+Your job: produce a SINGLE consolidated plan as a JSON array of actions.
+
+## Mental model
+
+This is a digital garden, not a filing cabinet. Notes are connected by
+[[wikilinks]] — every entity, concept, person, tool, or project mentioned
+should be wikilinked. The graph emerges from connections, not from
+categorization.
+
+Do NOT classify notes into types. Do NOT invent a "type" tag like "idea",
+"fact", "insight", "project". Tags describe what the content IS ABOUT
+(domain, topic), not what KIND of note it is.
+
+Identity in this graph comes from what a note connects to, not from what
+folder or category we put it in.
+
+## Output schema
+
+Return a JSON array. Each action object has:
+
+- "action": "create" | "update" | "append"
+- "target_path": vault-relative path. Required for update/append. null for create.
+- "title": short descriptive title (5-80 chars). No quotes around it.
+- "content": markdown body. USE [[wikilinks]] liberally for any concept,
+  person, tool, project, organization mentioned — even if the target note
+  doesn't exist yet (the system auto-creates stubs).
+- "tags": 2-5 free-form lowercase content tags (e.g. "authentication",
+  "reverse-proxy", "cost-optimization"). Hyphen-separated. Avoid generic
+  tags ("idea", "note", "thought") and kind tags ("fact", "insight").
+- "entities": list of [[Name]] strings extracted from "content".
+  Every item MUST appear as a [[wikilink]] in "content".
+  Include people, products, concepts, tools, organizations, projects.
+- "reason": one sentence stating why, citing seed numbers
+  (e.g. "consolidates seeds #1, #4, #7").
+- "source_seeds": list of integer seed numbers this action draws from.
+- "related": list of EXISTING note titles (from the vault context) for
+  cross-linking. Empty list if none apply.
 
 ## Rules
-- Treat the whole batch as one body of incoming material — deduplicate \
-across seeds, merge related items into one garden note when reasonable, \
-and only create separate notes when the topics are genuinely distinct.
-- Prefer updating existing notes over creating new ones.
-- Each action must have a clear reason that names which seed numbers it \
-covers (e.g. "consolidates seeds #1, #4, #7").
-- Return a JSON array of actions. Each action object has these fields:
-  - "action": "create" | "update" | "append"
-  - "target_path": vault-relative path (required for update/append, null for create)
-  - "title": note title
-  - "content": markdown content (full body for create/update, section to append)
-  - "note_type": one of idea, insight, project, event, task, fact, person, preference
-  - "reason": why this action is needed (cite seed numbers)
-  - "related": list of related note titles for cross-linking
-  - "source_seeds": list of seed numbers this action draws from
 
-Return ONLY the JSON array, no other text.
-If no actions are needed, return an empty array: []
-"""
+- Treat the entire batch as one body of incoming material — deduplicate
+  across seeds, MERGE related items into one note when reasonable.
+- Prefer UPDATE over CREATE when content meaningfully overlaps an
+  existing note in the vault context.
+- Every name in "entities" MUST appear as [[Name]] in "content". If you
+  can't naturally fit it as a wikilink, drop it from entities.
+- If a seed is too brief or has no extractable substance, omit it. Do
+  not pad with filler content.
+- Return [] if the entire batch warrants no action.
+- Return ONLY the JSON array. No markdown code fences. No commentary
+  before or after.
+
+## Example
+
+INPUT seeds:
+SEED #1: "Tested Vaultwarden behind Caddy reverse proxy. The X-Forwarded-Proto header was the issue — without it, OAuth callbacks broke."
+SEED #2: "Bitwarden client compatibility check for Vaultwarden — most clients work, except mobile push notifications need extra setup."
+
+OUTPUT:
+[
+  {
+    "action": "create",
+    "target_path": null,
+    "title": "Vaultwarden behind Caddy reverse proxy",
+    "content": "Got [[Vaultwarden]] running behind [[Caddy]]. The trick was getting [[X-Forwarded-Proto]] right — without it, Vaultwarden assumed http and OAuth callbacks broke.\\n\\nClient compatibility: most [[Bitwarden]] clients work, except mobile push notifications which need additional setup.",
+    "tags": ["self-hosting", "reverse-proxy", "bitwarden-compatibility"],
+    "entities": ["[[Vaultwarden]]", "[[Caddy]]", "[[X-Forwarded-Proto]]", "[[Bitwarden]]"],
+    "reason": "consolidates seeds #1 and #2, both about Vaultwarden self-hosting setup",
+    "source_seeds": [1, 2],
+    "related": []
+  }
+]
+"""  # noqa: E501  -- prompt body has long natural-language lines on purpose
+
+
+# Tags an LLM might emit even after the prompt says not to. Filtered at
+# parse time — these are *kind* labels masquerading as content tags.
+_KIND_TAG_BLOCKLIST: frozenset[str] = frozenset(
+    {
+        "idea",
+        "ideas",
+        "insight",
+        "insights",
+        "fact",
+        "facts",
+        "note",
+        "notes",
+        "thought",
+        "thoughts",
+        "project",
+        "projects",
+        "task",
+        "tasks",
+        "event",
+        "events",
+        "person",
+        "people",
+        "preference",
+        "preferences",
+    }
+)
+_MAX_TAGS_PER_ACTION: int = 5
+_TAG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_WIKILINK_PATTERN = re.compile(r"^\[\[(.+?)\]\]$")
 
 
 @dataclass
@@ -66,8 +152,9 @@ class UpdateAction:
     target_path: str | None
     title: str
     content: str
-    note_type: str
     reason: str
+    tags: list[str] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
     related: list[str] = field(default_factory=list)
 
 
@@ -95,7 +182,7 @@ class BatchItem:
     content: str
 
 
-_REQUIRED_ACTION_FIELDS = {"action", "title", "content", "note_type", "reason"}
+_REQUIRED_ACTION_FIELDS = {"action", "title", "content", "reason"}
 
 
 def _empty_compile_result() -> CompileResult:
@@ -228,22 +315,32 @@ class IngestCompiler:
         raw = await self._llm.chat(
             system=COMPILE_BATCH_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_msg}],
+            suppress_reasoning=True,
         )
         return self._parse_plan(raw)
 
     def _parse_plan(self, raw: str) -> list[dict[str, Any]]:
-        """Parse LLM response as JSON array of actions."""
+        """Parse LLM response as JSON array of actions.
+
+        Robust against three known failure modes:
+        - markdown code fences (```json ... ```)
+        - reasoning-model preamble that survives suppression (e.g.
+          stray ``<think>...`` even with ``thinking={"type": "disabled"}``)
+        - trailing commentary after the array
+        """
         text = raw.strip()
-        # Try to extract JSON array if wrapped in markdown code block
-        if "```" in text:
-            start = text.find("[")
-            end = text.rfind("]")
-            if start != -1 and end != -1:
-                text = text[start : end + 1]
+        # Pull out the first ``[`` through the matching last ``]`` —
+        # everything outside is preamble/postamble we don't trust.
+        start = text.find("[")
+        end = text.rfind("]")
+        if start == -1 or end == -1 or end <= start:
+            logger.warning("ingest_compile_parse_no_array", raw=text[:200])
+            return []
+        candidate = text[start : end + 1]
         try:
-            parsed = json.loads(text)
+            parsed = json.loads(candidate)
         except (json.JSONDecodeError, ValueError):
-            logger.warning("ingest_compile_parse_failed", raw=text[:200])
+            logger.warning("ingest_compile_parse_failed", raw=candidate[:200])
             return []
         if not isinstance(parsed, list):
             return []
@@ -259,13 +356,17 @@ class IngestCompiler:
             if not self._validate_action(raw_action):
                 continue
 
+            tags = _clean_tags(raw_action.get("tags") or [])
+            entities = _clean_entities(raw_action.get("entities") or [], raw_action["content"])
+
             action = UpdateAction(
                 action=raw_action["action"],
                 target_path=raw_action.get("target_path"),
                 title=raw_action["title"],
                 content=raw_action["content"],
-                note_type=raw_action["note_type"],
                 reason=raw_action["reason"],
+                tags=tags,
+                entities=entities,
                 related=raw_action.get("related", []),
             )
 
@@ -275,8 +376,9 @@ class IngestCompiler:
                         GardenNote(
                             title=action.title,
                             content=action.content,
-                            note_type=action.note_type,
                             source="ingest-compiler",
+                            tags=action.tags,
+                            entities=action.entities,
                             related=action.related,
                         )
                     )
@@ -318,6 +420,64 @@ class IngestCompiler:
         if raw["action"] not in ("create", "update", "append"):
             return False
         return not (raw["action"] in ("update", "append") and not raw.get("target_path"))
+
+
+def _clean_tags(raw_tags: Any) -> list[str]:
+    """Filter LLM-emitted tags to the documented contract.
+
+    Drops kind tags ("idea", "fact"...) the prompt explicitly forbids,
+    rejects values that don't match the lowercase-hyphen pattern, dedupes,
+    and caps at ``_MAX_TAGS_PER_ACTION``.
+    """
+    if not isinstance(raw_tags, list):
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for tag in raw_tags:
+        if not isinstance(tag, str):
+            continue
+        normalised = tag.strip().lower()
+        if not normalised or normalised in seen:
+            continue
+        if normalised in _KIND_TAG_BLOCKLIST:
+            continue
+        if not _TAG_PATTERN.match(normalised):
+            continue
+        cleaned.append(normalised)
+        seen.add(normalised)
+        if len(cleaned) >= _MAX_TAGS_PER_ACTION:
+            break
+    return cleaned
+
+
+def _clean_entities(raw_entities: Any, content: str) -> list[str]:
+    """Drop entities that don't appear as ``[[wikilinks]]`` in ``content``.
+
+    Anti-hallucination guard: the LLM is told every entity must also be
+    in the body; we enforce it. Items that aren't in ``[[Name]]`` shape
+    or whose target name doesn't appear inside any wikilink in ``content``
+    are silently dropped.
+    """
+    if not isinstance(raw_entities, list):
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for entity in raw_entities:
+        if not isinstance(entity, str):
+            continue
+        match = _WIKILINK_PATTERN.match(entity.strip())
+        if not match:
+            continue
+        canonical = f"[[{match.group(1).strip()}]]"
+        if canonical in seen:
+            continue
+        # The exact wikilink (case-sensitive) must appear in the body —
+        # otherwise the LLM invented it.
+        if canonical not in content:
+            continue
+        cleaned.append(canonical)
+        seen.add(canonical)
+    return cleaned
 
 
 def _chunk_batch(items: list[BatchItem], char_budget: int) -> list[list[BatchItem]]:

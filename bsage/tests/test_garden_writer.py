@@ -418,35 +418,28 @@ class TestHandleWriteNote:
 
         assert result["status"] == "saved"
         assert result["title"] == "Test Note"
-        assert result["note_type"] == "idea"
+        # Post dynamic-ontology refactor: handle_write_note no longer
+        # echoes a note_type — identity is carried by tags + entities.
+        assert "note_type" not in result
         assert "path" in result
         assert Path(result["path"]).exists()
 
     @pytest.mark.asyncio
-    async def test_handle_write_note_default_note_type(self, tmp_path: Path) -> None:
-        """Omitting note_type should default to 'idea'."""
+    async def test_handle_write_note_lands_in_default_folder(self, tmp_path: Path) -> None:
+        """Without note_type, new notes land in the temporary 'ideas/' holding
+        area until Step B3 ships the maturity-based layout."""
         vault = Vault(tmp_path)
         vault.ensure_dirs()
         writer = GardenWriter(vault)
 
         result = await writer.handle_write_note({"title": "Minimal", "content": "Body"})
 
-        assert result["note_type"] == "idea"
-        content = Path(result["path"]).read_text()
-        assert "type: idea" in content
-
-    @pytest.mark.asyncio
-    async def test_handle_write_note_invalid_note_type_fallback(self, tmp_path: Path) -> None:
-        """Invalid note_type should fall back to 'idea'."""
-        vault = Vault(tmp_path)
-        vault.ensure_dirs()
-        writer = GardenWriter(vault)
-
-        result = await writer.handle_write_note(
-            {"title": "Bad Type", "content": "Body", "note_type": "invalid"}
-        )
-
-        assert result["note_type"] == "idea"
+        path = Path(result["path"])
+        assert path.parent.name == "ideas"
+        # Frontmatter no longer carries a "type:" field — tags carry the
+        # meaning instead.
+        body = path.read_text()
+        assert "type: idea" not in body
 
     @pytest.mark.asyncio
     async def test_handle_write_note_sets_source_to_chat(self, tmp_path: Path) -> None:

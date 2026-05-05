@@ -31,7 +31,6 @@ import yaml
 from bsage.core.events import emit_event
 from bsage.garden.note import (
     _MAX_ACTION_SUMMARY,
-    _VALID_NOTE_TYPES,
     GardenNote,
     build_frontmatter,
     slugify,
@@ -95,12 +94,21 @@ class _WriterIOMixin:
     ) -> Path:  # pragma: no cover - implemented in GardenWriter
         ...
 
-    def _resolve_folder(self, note_type: str) -> str:
-        """Resolve the vault folder for a note type using ontology mapping."""
-        if self._ontology:
+    def _resolve_folder(self, note_type: str | None) -> str:
+        """Resolve the vault folder for a note type using ontology mapping.
+
+        Notes written without ``note_type`` (the dynamic-ontology default
+        post-refactor) land in ``ideas/`` as a temporary holding area
+        until Step B3 introduces the maturity-based layout. Existing
+        ontology entries still take precedence so vaults from before the
+        refactor keep their folder shape.
+        """
+        if note_type and self._ontology:
             folder = self._ontology.get_entity_folder(note_type)
             if folder:
                 return folder.rstrip("/")
+        if not note_type:
+            return "ideas"
         # Fallback: use type name as folder (e.g. "idea" → "ideas")
         return f"{note_type}s" if not note_type.endswith("s") else note_type
 
@@ -684,22 +692,19 @@ class _WriterToolHandlersMixin:
         """
         title = args.get("title", "Untitled")
         content = args.get("content", "")
-        note_type = args.get("note_type", "idea")
         tags = args.get("tags", [])
-
-        if note_type not in _VALID_NOTE_TYPES:
-            note_type = "idea"
+        entities = args.get("entities", [])
 
         path = await self.write_garden(
             {
                 "title": title,
                 "content": content,
-                "note_type": note_type,
                 "source": "chat",
                 "tags": tags,
+                "entities": entities,
             }
         )
-        return {"status": "saved", "title": title, "note_type": note_type, "path": str(path)}
+        return {"status": "saved", "title": title, "path": str(path)}
 
     async def handle_write_seed(self, args: dict[str, Any]) -> dict[str, Any]:
         """Handle a write-seed tool call from the LLM.
