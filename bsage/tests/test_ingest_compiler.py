@@ -606,6 +606,53 @@ class TestIngestCompilerCompileBatch:
         assert result.notes_created == 0
         assert result.notes_updated == 0
 
+    @pytest.mark.asyncio
+    async def test_partial_chunk_failure_preserves_earlier_results(
+        self,
+        vault_and_writer: tuple[Vault, GardenWriter],
+        mock_llm: AsyncMock,
+    ) -> None:
+        """Surfaced by the real-vault import smoke test — when the first
+        chunk succeeds and a later one raises (LLM timeout, malformed
+        JSON, ollama process crash), the whole compile previously
+        threw away the in-progress count even though the writes were
+        already on disk. Now per-chunk failures only burn that chunk."""
+        from bsage.garden.ingest_compiler import BatchItem
+
+        _, writer = vault_and_writer
+        good_plan = json.dumps(
+            [
+                {
+                    "action": "create",
+                    "target_path": None,
+                    "title": "First chunk note",
+                    "content": "Content",
+                    "tags": ["test"],
+                    "entities": [],
+                    "reason": "test",
+                    "source_seeds": [1],
+                    "related": [],
+                }
+            ]
+        )
+        # First call succeeds, second raises mid-compile.
+        mock_llm.chat = AsyncMock(side_effect=[good_plan, RuntimeError("LLM down")])
+        # Force two chunks by giving each item more than half the budget.
+        compiler = self._make_compiler(writer, mock_llm, batch_char_budget=4_000)
+
+        big = "x" * 3_000
+        items = [
+            BatchItem(label="a.md", content=big),
+            BatchItem(label="b.md", content=big),
+        ]
+        result = await compiler.compile_batch(items=items, seed_source="partial")
+
+        assert mock_llm.chat.await_count == 2
+        # The successful chunk's count survives the second chunk's failure.
+        assert result.notes_created == 1
+        assert len(result.actions_taken) == 1
+        assert result.llm_calls == 1
+
 
 class TestDynamicOntologyContract:
     """Step B1 — compile_batch produces tag- and entity-rich plans, not a

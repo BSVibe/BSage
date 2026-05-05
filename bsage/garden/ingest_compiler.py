@@ -239,30 +239,36 @@ class IngestCompiler:
         notes_created = 0
         notes_updated = 0
         llm_calls = 0
+        chunk_failures = 0
 
-        try:
-            for chunk in chunks:
-                # Per-chunk related lookup — each chunk gets vault context
-                # relevant to ITS own seeds, not items 1-3 of the whole
-                # batch. Lets the LLM reuse / update existing notes
-                # instead of always creating new ones.
-                chunk_query = "\n\n".join(item.content[:500] for item in chunk)
+        for chunk in chunks:
+            # Per-chunk related lookup — each chunk gets vault context
+            # relevant to ITS own seeds, not items 1-3 of the whole
+            # batch. Lets the LLM reuse / update existing notes
+            # instead of always creating new ones.
+            chunk_query = "\n\n".join(item.content[:500] for item in chunk)
+            try:
                 related_context = await self._find_related(chunk_query)
 
                 plan = await self._plan_batch_updates(chunk, seed_source, related_context)
                 llm_calls += 1
                 chunk_result = await self._execute_plan(plan)
-                actions_taken.extend(chunk_result.actions_taken)
-                notes_created += chunk_result.notes_created
-                notes_updated += chunk_result.notes_updated
-        except Exception:
-            logger.warning(
-                "ingest_compile_batch_failed_using_noop",
-                source=seed_source,
-                item_count=len(items),
-                exc_info=True,
-            )
-            return _empty_compile_result()
+            except Exception:
+                # Per-chunk failure must NOT discard work that earlier
+                # chunks already wrote to disk. Log and keep going so
+                # bulk imports stay best-effort: a single malformed
+                # batch shouldn't sink the whole compile.
+                chunk_failures += 1
+                logger.warning(
+                    "ingest_compile_chunk_failed",
+                    source=seed_source,
+                    chunk_size=len(chunk),
+                    exc_info=True,
+                )
+                continue
+            actions_taken.extend(chunk_result.actions_taken)
+            notes_created += chunk_result.notes_created
+            notes_updated += chunk_result.notes_updated
 
         await emit_event(
             self._event_bus,
@@ -283,6 +289,7 @@ class IngestCompiler:
             llm_calls=llm_calls,
             updated=notes_updated,
             created=notes_created,
+            chunk_failures=chunk_failures,
         )
         return CompileResult(
             actions_taken=actions_taken,
