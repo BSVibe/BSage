@@ -68,20 +68,33 @@ class VaultLinter:
         self._stale_days = stale_days
 
     def _resolve_garden_dirs(self) -> list[str]:
-        """Build garden directory list from ontology or vault scan."""
-        if self._ontology:
-            return [
-                meta.get("folder", "").rstrip("/")
-                for meta in self._ontology.get_entity_types().values()
-                if meta.get("folder")
-            ]
-        # Fallback: scan vault root for non-system directories
-        dirs: list[str] = []
-        skip = {"seeds", "actions", "tmp", "node_modules"}
+        """Garden directories the linter scans.
+
+        Walks the maturity tree (``garden/seedling``, ``garden/budding``,
+        ``garden/evergreen``) plus the ``garden/entities`` stub folder.
+        Unmigrated legacy folders (``ideas/``, ``insights/``...) are
+        picked up by walking the vault root so the linter still works
+        on vaults that haven't run ``bsage migrate-flatten-vault`` yet.
+        """
+        primary = ["garden/seedling", "garden/budding", "garden/evergreen", "garden/entities"]
+        merged: list[str] = []
+        seen: set[str] = set()
+        for entry in primary:
+            if (self._vault.root / entry).exists() and entry not in seen:
+                seen.add(entry)
+                merged.append(entry)
+        # Legacy fallback: any non-system top-level directory is a candidate.
+        skip = {"seeds", "actions", "tmp", "node_modules", "garden"}
         for child in sorted(self._vault.root.iterdir()):
-            if child.is_dir() and not child.name.startswith((".", "_")) and child.name not in skip:
-                dirs.append(child.name)
-        return dirs
+            if (
+                child.is_dir()
+                and not child.name.startswith((".", "_"))
+                and child.name not in skip
+                and child.name not in seen
+            ):
+                seen.add(child.name)
+                merged.append(child.name)
+        return merged
 
     async def lint(self) -> LintReport:
         """Run all lint checks and write a report note.

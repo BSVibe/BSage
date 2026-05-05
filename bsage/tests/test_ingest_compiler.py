@@ -136,9 +136,12 @@ class TestIngestCompilerCompile:
 
         assert result.notes_created == 1
         assert result.notes_updated == 0
-        # Verify the note file was actually written
-        insight_dir = vault.root / "insights"
-        md_files = list(insight_dir.glob("*.md"))
+        # Post dynamic-ontology refactor: ingest_compiler stops asking the LLM
+        # to classify notes, so we no longer fan out to per-type folders.
+        # New notes land in the temporary "ideas/" holding area until
+        # Step B3 swaps in the maturity-based layout.
+        seedling_dir = vault.root / "garden" / "seedling"
+        md_files = list(seedling_dir.glob("*.md"))
         assert len(md_files) >= 1
         content = md_files[0].read_text()
         assert "Knowledge Graphs Overview" in content
@@ -163,11 +166,10 @@ class TestIngestCompilerCompile:
             GardenNote(
                 title="AI Research",
                 content="Early research on AI.",
-                note_type="insight",
                 source="manual",
             )
         )
-        existing_path = "insights/ai-research.md"
+        existing_path = "garden/seedling/ai-research.md"
 
         plan = json.dumps(
             [
@@ -216,11 +218,10 @@ class TestIngestCompilerCompile:
             GardenNote(
                 title="Machine Learning",
                 content="ML is a subset of AI.",
-                note_type="idea",
                 source="manual",
             )
         )
-        existing_path = "ideas/machine-learning.md"
+        existing_path = "garden/seedling/machine-learning.md"
 
         plan = json.dumps(
             [
@@ -391,7 +392,7 @@ class TestIngestCompilerCompile:
 
         assert result.notes_created == 1
         vault = vault_and_writer[0]
-        note_files = list((vault.root / "insights").glob("*.md"))
+        note_files = list((vault.root / "garden" / "seedling").glob("*.md"))
         content = note_files[0].read_text()
         assert "[[Machine Learning]]" in content or "Machine Learning" in content
 
@@ -604,6 +605,234 @@ class TestIngestCompilerCompileBatch:
         assert mock_llm.chat.await_count == 0
         assert result.notes_created == 0
         assert result.notes_updated == 0
+
+    @pytest.mark.asyncio
+    async def test_partial_chunk_failure_preserves_earlier_results(
+        self,
+        vault_and_writer: tuple[Vault, GardenWriter],
+        mock_llm: AsyncMock,
+    ) -> None:
+        """Surfaced by the real-vault import smoke test — when the first
+        chunk succeeds and a later one raises (LLM timeout, malformed
+        JSON, ollama process crash), the whole compile previously
+        threw away the in-progress count even though the writes were
+        already on disk. Now per-chunk failures only burn that chunk."""
+        from bsage.garden.ingest_compiler import BatchItem
+
+        _, writer = vault_and_writer
+        good_plan = json.dumps(
+            [
+                {
+                    "action": "create",
+                    "target_path": None,
+                    "title": "First chunk note",
+                    "content": "Content",
+                    "tags": ["test"],
+                    "entities": [],
+                    "reason": "test",
+                    "source_seeds": [1],
+                    "related": [],
+                }
+            ]
+        )
+        # First call succeeds, second raises mid-compile.
+        mock_llm.chat = AsyncMock(side_effect=[good_plan, RuntimeError("LLM down")])
+        # Force two chunks by giving each item more than half the budget.
+        compiler = self._make_compiler(writer, mock_llm, batch_char_budget=4_000)
+
+        big = "x" * 3_000
+        items = [
+            BatchItem(label="a.md", content=big),
+            BatchItem(label="b.md", content=big),
+        ]
+        result = await compiler.compile_batch(items=items, seed_source="partial")
+
+        assert mock_llm.chat.await_count == 2
+        # The successful chunk's count survives the second chunk's failure.
+        assert result.notes_created == 1
+        assert len(result.actions_taken) == 1
+        assert result.llm_calls == 1
+
+
+class TestDynamicOntologyContract:
+    """Step B1 — compile_batch produces tag- and entity-rich plans, not a
+    note_type pick. The LLM-output cleaners enforce the ``tags``/``entities``
+    contract documented in COMPILE_BATCH_SYSTEM_PROMPT (kind tag blocklist,
+    wikilink validation, count caps)."""
+
+    @pytest.fixture()
+    def vault_and_writer(self, tmp_path: Path) -> tuple[Vault, GardenWriter]:
+        vault = Vault(tmp_path)
+        vault.ensure_dirs()
+        return vault, GardenWriter(vault)
+
+    @pytest.fixture()
+    def mock_llm(self) -> AsyncMock:
+        llm = AsyncMock()
+        llm.chat = AsyncMock(return_value="[]")
+        return llm
+
+    def _make_compiler(self, writer: GardenWriter, mock_llm: AsyncMock):
+        from bsage.garden.ingest_compiler import IngestCompiler
+
+        return IngestCompiler(
+            garden_writer=writer,
+            llm_client=mock_llm,
+            retriever=None,
+            event_bus=None,
+            max_updates=10,
+        )
+
+    @pytest.mark.asyncio
+    async def test_compile_batch_forwards_suppress_reasoning_to_llm(
+        self, vault_and_writer: tuple[Vault, GardenWriter], mock_llm: AsyncMock
+    ) -> None:
+        """compile_batch must call llm.chat(suppress_reasoning=True).
+
+        Compile-time output is a structured JSON array. CoT prefixes
+        from reasoning models would corrupt the parse, so the compiler
+        is the canonical caller of suppression."""
+        from bsage.garden.ingest_compiler import BatchItem
+
+        _, writer = vault_and_writer
+        compiler = self._make_compiler(writer, mock_llm)
+        await compiler.compile_batch(
+            items=[BatchItem(label="x.md", content="hello world")],
+            seed_source="test",
+        )
+        kwargs = mock_llm.chat.await_args.kwargs
+        assert kwargs.get("suppress_reasoning") is True
+
+    @pytest.mark.asyncio
+    async def test_kind_tags_are_filtered_out(
+        self, vault_and_writer: tuple[Vault, GardenWriter], mock_llm: AsyncMock
+    ) -> None:
+        """LLM may slip through forbidden 'kind' tags — strip them so the
+        graph doesn't repopulate the type filing cabinet via tags."""
+        from bsage.garden.ingest_compiler import BatchItem
+
+        vault, writer = vault_and_writer
+        plan = json.dumps(
+            [
+                {
+                    "action": "create",
+                    "target_path": None,
+                    "title": "Test note",
+                    "content": "Just some content",
+                    "tags": ["idea", "self-hosting", "fact", "reverse-proxy"],
+                    "entities": [],
+                    "reason": "test",
+                    "source_seeds": [1],
+                    "related": [],
+                }
+            ]
+        )
+        mock_llm.chat = AsyncMock(return_value=plan)
+        compiler = self._make_compiler(writer, mock_llm)
+        result = await compiler.compile_batch(
+            items=[BatchItem(label="x.md", content="hello")], seed_source="test"
+        )
+
+        assert result.notes_created == 1
+        action = result.actions_taken[0]
+        # "idea" and "fact" stripped; only domain tags survive.
+        assert "idea" not in action.tags
+        assert "fact" not in action.tags
+        assert "self-hosting" in action.tags
+        assert "reverse-proxy" in action.tags
+
+    @pytest.mark.asyncio
+    async def test_tags_capped_at_five(
+        self, vault_and_writer: tuple[Vault, GardenWriter], mock_llm: AsyncMock
+    ) -> None:
+        from bsage.garden.ingest_compiler import BatchItem
+
+        _, writer = vault_and_writer
+        plan = json.dumps(
+            [
+                {
+                    "action": "create",
+                    "target_path": None,
+                    "title": "T",
+                    "content": "c",
+                    "tags": [f"tag-{i}" for i in range(10)],
+                    "entities": [],
+                    "reason": "test",
+                    "source_seeds": [1],
+                    "related": [],
+                }
+            ]
+        )
+        mock_llm.chat = AsyncMock(return_value=plan)
+        compiler = self._make_compiler(writer, mock_llm)
+        result = await compiler.compile_batch(
+            items=[BatchItem(label="x.md", content="hi")], seed_source="test"
+        )
+        assert len(result.actions_taken[0].tags) == 5
+
+    @pytest.mark.asyncio
+    async def test_hallucinated_entities_are_dropped(
+        self, vault_and_writer: tuple[Vault, GardenWriter], mock_llm: AsyncMock
+    ) -> None:
+        """Entities that don't appear as [[wikilinks]] in content are dropped.
+
+        The prompt mandates this; the cleaner enforces it. Without the
+        guard, LLMs spray imagined connections that point to nothing."""
+        from bsage.garden.ingest_compiler import BatchItem
+
+        _, writer = vault_and_writer
+        body = "Working with [[Vaultwarden]] and [[Caddy]] today."
+        plan = json.dumps(
+            [
+                {
+                    "action": "create",
+                    "target_path": None,
+                    "title": "Vaultwarden setup",
+                    "content": body,
+                    "tags": ["self-hosting"],
+                    # Hallucinated [[OAuth]] never appears in body.
+                    "entities": ["[[Vaultwarden]]", "[[Caddy]]", "[[OAuth]]", "RawName"],
+                    "reason": "test",
+                    "source_seeds": [1],
+                    "related": [],
+                }
+            ]
+        )
+        mock_llm.chat = AsyncMock(return_value=plan)
+        compiler = self._make_compiler(writer, mock_llm)
+        result = await compiler.compile_batch(
+            items=[BatchItem(label="x.md", content="raw")], seed_source="test"
+        )
+        action = result.actions_taken[0]
+        assert "[[Vaultwarden]]" in action.entities
+        assert "[[Caddy]]" in action.entities
+        # Hallucinated and malformed entries dropped.
+        assert "[[OAuth]]" not in action.entities
+        assert "RawName" not in action.entities
+
+    @pytest.mark.asyncio
+    async def test_robust_parse_strips_reasoning_prefix_and_fences(
+        self, vault_and_writer: tuple[Vault, GardenWriter], mock_llm: AsyncMock
+    ) -> None:
+        """Even with suppress_reasoning=True, some providers leak a
+        ``<think>...`` prefix or wrap the JSON in ```json fences. The
+        parser pulls out the first ``[`` through last ``]`` regardless."""
+        from bsage.garden.ingest_compiler import BatchItem
+
+        _, writer = vault_and_writer
+        raw = (
+            "<think>I should produce a plan.</think>\n\n"
+            "```json\n"
+            '[{"action":"create","target_path":null,"title":"T","content":"c",'
+            '"tags":["a"],"entities":[],"reason":"r","source_seeds":[1],"related":[]}]'
+            "\n```\n\nThat's my plan."
+        )
+        mock_llm.chat = AsyncMock(return_value=raw)
+        compiler = self._make_compiler(writer, mock_llm)
+        result = await compiler.compile_batch(
+            items=[BatchItem(label="x.md", content="hi")], seed_source="test"
+        )
+        assert result.notes_created == 1
 
 
 class TestDeriveBatchCharBudget:

@@ -65,12 +65,18 @@ class TestWriteNoteSchema:
         params = WRITE_NOTE_TOOL["function"]["parameters"]
         assert set(params["required"]) == {"title", "content"}
 
-    def test_note_type_enum_includes_canonical_types(self) -> None:
-        enum = WRITE_NOTE_TOOL["function"]["parameters"]["properties"]["note_type"]["enum"]
-        # Must be sorted and include the canonical set.
-        assert enum == sorted(enum)
-        for required in ("idea", "insight", "project", "event", "task", "fact"):
-            assert required in enum
+    def test_note_type_enum_removed_from_schema(self) -> None:
+        """Dynamic-ontology refactor: ``note_type`` is no longer a tool input.
+
+        The LLM is asked for free-form ``tags`` + ``entities`` instead, so
+        the type filing cabinet doesn't get reintroduced through tool
+        schemas."""
+        properties = WRITE_NOTE_TOOL["function"]["parameters"]["properties"]
+        assert "note_type" not in properties
+        assert "tags" in properties
+        assert "entities" in properties
+        assert properties["tags"]["maxItems"] == 5
+        assert properties["entities"]["items"]["pattern"] == r"^\[\[.+\]\]$"
 
 
 class TestUpdateAppendDeleteSchemas:

@@ -7,7 +7,9 @@ update/create related garden notes instead of waiting for scheduled skills.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
@@ -31,31 +33,116 @@ logger = structlog.get_logger(__name__)
 _DEFAULT_BATCH_CHAR_BUDGET = 5_000
 
 COMPILE_BATCH_SYSTEM_PROMPT = """\
-You are an ingest compiler for a personal knowledge base (Obsidian vault).
+You are an ingest compiler for a personal knowledge garden (Obsidian vault).
 
-You are given a BATCH of NEW seeds (numbered) plus EXISTING notes from the \
-vault. Produce a SINGLE consolidated plan that covers the entire batch.
+You receive:
+1. A BATCH of NEW seeds (numbered) — recently captured raw notes.
+2. EXISTING notes from the vault — context for deduplication.
+
+Your job: produce a SINGLE consolidated plan as a JSON array of actions.
+
+## Mental model
+
+This is a digital garden, not a filing cabinet. Notes are connected by
+[[wikilinks]] — every entity, concept, person, tool, or project mentioned
+should be wikilinked. The graph emerges from connections, not from
+categorization.
+
+Do NOT classify notes into types. Do NOT invent a "type" tag like "idea",
+"fact", "insight", "project". Tags describe what the content IS ABOUT
+(domain, topic), not what KIND of note it is.
+
+Identity in this graph comes from what a note connects to, not from what
+folder or category we put it in.
+
+## Output schema
+
+Return a JSON array. Each action object has:
+
+- "action": "create" | "update" | "append"
+- "target_path": vault-relative path. Required for update/append. null for create.
+- "title": short descriptive title (5-80 chars). No quotes around it.
+- "content": markdown body. USE [[wikilinks]] liberally for any concept,
+  person, tool, project, organization mentioned — even if the target note
+  doesn't exist yet (the system auto-creates stubs).
+- "tags": 2-5 free-form lowercase content tags (e.g. "authentication",
+  "reverse-proxy", "cost-optimization"). Hyphen-separated. Avoid generic
+  tags ("idea", "note", "thought") and kind tags ("fact", "insight").
+- "entities": list of [[Name]] strings extracted from "content".
+  Every item MUST appear as a [[wikilink]] in "content".
+  Include people, products, concepts, tools, organizations, projects.
+- "reason": one sentence stating why, citing seed numbers
+  (e.g. "consolidates seeds #1, #4, #7").
+- "source_seeds": list of integer seed numbers this action draws from.
+- "related": list of EXISTING note titles (from the vault context) for
+  cross-linking. Empty list if none apply.
 
 ## Rules
-- Treat the whole batch as one body of incoming material — deduplicate \
-across seeds, merge related items into one garden note when reasonable, \
-and only create separate notes when the topics are genuinely distinct.
-- Prefer updating existing notes over creating new ones.
-- Each action must have a clear reason that names which seed numbers it \
-covers (e.g. "consolidates seeds #1, #4, #7").
-- Return a JSON array of actions. Each action object has these fields:
-  - "action": "create" | "update" | "append"
-  - "target_path": vault-relative path (required for update/append, null for create)
-  - "title": note title
-  - "content": markdown content (full body for create/update, section to append)
-  - "note_type": one of idea, insight, project, event, task, fact, person, preference
-  - "reason": why this action is needed (cite seed numbers)
-  - "related": list of related note titles for cross-linking
-  - "source_seeds": list of seed numbers this action draws from
 
-Return ONLY the JSON array, no other text.
-If no actions are needed, return an empty array: []
-"""
+- Treat the entire batch as one body of incoming material — deduplicate
+  across seeds, MERGE related items into one note when reasonable.
+- Prefer UPDATE over CREATE when content meaningfully overlaps an
+  existing note in the vault context.
+- Every name in "entities" MUST appear as [[Name]] in "content". If you
+  can't naturally fit it as a wikilink, drop it from entities.
+- If a seed is too brief or has no extractable substance, omit it. Do
+  not pad with filler content.
+- Return [] if the entire batch warrants no action.
+- Return ONLY the JSON array. No markdown code fences. No commentary
+  before or after.
+
+## Example
+
+INPUT seeds:
+SEED #1: "Tested Vaultwarden behind Caddy reverse proxy. The X-Forwarded-Proto header was the issue — without it, OAuth callbacks broke."
+SEED #2: "Bitwarden client compatibility check for Vaultwarden — most clients work, except mobile push notifications need extra setup."
+
+OUTPUT:
+[
+  {
+    "action": "create",
+    "target_path": null,
+    "title": "Vaultwarden behind Caddy reverse proxy",
+    "content": "Got [[Vaultwarden]] running behind [[Caddy]]. The trick was getting [[X-Forwarded-Proto]] right — without it, Vaultwarden assumed http and OAuth callbacks broke.\\n\\nClient compatibility: most [[Bitwarden]] clients work, except mobile push notifications which need additional setup.",
+    "tags": ["self-hosting", "reverse-proxy", "bitwarden-compatibility"],
+    "entities": ["[[Vaultwarden]]", "[[Caddy]]", "[[X-Forwarded-Proto]]", "[[Bitwarden]]"],
+    "reason": "consolidates seeds #1 and #2, both about Vaultwarden self-hosting setup",
+    "source_seeds": [1, 2],
+    "related": []
+  }
+]
+"""  # noqa: E501  -- prompt body has long natural-language lines on purpose
+
+
+# Tags an LLM might emit even after the prompt says not to. Filtered at
+# parse time — these are *kind* labels masquerading as content tags.
+_KIND_TAG_BLOCKLIST: frozenset[str] = frozenset(
+    {
+        "idea",
+        "ideas",
+        "insight",
+        "insights",
+        "fact",
+        "facts",
+        "note",
+        "notes",
+        "thought",
+        "thoughts",
+        "project",
+        "projects",
+        "task",
+        "tasks",
+        "event",
+        "events",
+        "person",
+        "people",
+        "preference",
+        "preferences",
+    }
+)
+_MAX_TAGS_PER_ACTION: int = 5
+_TAG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_WIKILINK_PATTERN = re.compile(r"^\[\[(.+?)\]\]$")
 
 
 @dataclass
@@ -66,8 +153,9 @@ class UpdateAction:
     target_path: str | None
     title: str
     content: str
-    note_type: str
     reason: str
+    tags: list[str] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
     related: list[str] = field(default_factory=list)
 
 
@@ -95,7 +183,7 @@ class BatchItem:
     content: str
 
 
-_REQUIRED_ACTION_FIELDS = {"action", "title", "content", "note_type", "reason"}
+_REQUIRED_ACTION_FIELDS = {"action", "title", "content", "reason"}
 
 
 def _empty_compile_result() -> CompileResult:
@@ -140,41 +228,84 @@ class IngestCompiler:
         if not items:
             return _empty_compile_result()
 
+        chunks = _chunk_batch(items, self._batch_char_budget)
         await emit_event(
             self._event_bus,
             "INGEST_COMPILE_BATCH_START",
-            {"source": seed_source, "item_count": len(items)},
+            {"source": seed_source, "item_count": len(items), "chunk_count": len(chunks)},
         )
 
-        chunks = _chunk_batch(items, self._batch_char_budget)
         actions_taken: list[UpdateAction] = []
         notes_created = 0
         notes_updated = 0
         llm_calls = 0
+        chunk_failures = 0
 
-        try:
-            for chunk in chunks:
-                # Per-chunk related lookup — each chunk gets vault context
-                # relevant to ITS own seeds, not items 1-3 of the whole
-                # batch. Lets the LLM reuse / update existing notes
-                # instead of always creating new ones.
-                chunk_query = "\n\n".join(item.content[:500] for item in chunk)
+        for chunk_index, chunk in enumerate(chunks):
+            # Per-chunk progress event so a long bulk import can stream
+            # progress to a UI loading bar — see plugin runner / SSE
+            # bridges. Plain payload (no exception details) so the event
+            # bus stays free of large blobs.
+            await emit_event(
+                self._event_bus,
+                "INGEST_COMPILE_BATCH_CHUNK_START",
+                {
+                    "source": seed_source,
+                    "chunk_index": chunk_index,
+                    "chunk_count": len(chunks),
+                    "chunk_size": len(chunk),
+                },
+            )
+
+            # Per-chunk related lookup — each chunk gets vault context
+            # relevant to ITS own seeds, not items 1-3 of the whole
+            # batch. Lets the LLM reuse / update existing notes
+            # instead of always creating new ones.
+            chunk_query = "\n\n".join(item.content[:500] for item in chunk)
+            chunk_result: CompileResult | None = None
+            try:
                 related_context = await self._find_related(chunk_query)
 
                 plan = await self._plan_batch_updates(chunk, seed_source, related_context)
                 llm_calls += 1
                 chunk_result = await self._execute_plan(plan)
-                actions_taken.extend(chunk_result.actions_taken)
-                notes_created += chunk_result.notes_created
-                notes_updated += chunk_result.notes_updated
-        except Exception:
-            logger.warning(
-                "ingest_compile_batch_failed_using_noop",
-                source=seed_source,
-                item_count=len(items),
-                exc_info=True,
+            except Exception:
+                # Per-chunk failure must NOT discard work that earlier
+                # chunks already wrote to disk. Log and keep going so
+                # bulk imports stay best-effort: a single malformed
+                # batch shouldn't sink the whole compile.
+                chunk_failures += 1
+                logger.warning(
+                    "ingest_compile_chunk_failed",
+                    source=seed_source,
+                    chunk_index=chunk_index,
+                    chunk_size=len(chunk),
+                    exc_info=True,
+                )
+                await emit_event(
+                    self._event_bus,
+                    "INGEST_COMPILE_BATCH_CHUNK_FAILED",
+                    {
+                        "source": seed_source,
+                        "chunk_index": chunk_index,
+                        "chunk_count": len(chunks),
+                    },
+                )
+                continue
+            actions_taken.extend(chunk_result.actions_taken)
+            notes_created += chunk_result.notes_created
+            notes_updated += chunk_result.notes_updated
+            await emit_event(
+                self._event_bus,
+                "INGEST_COMPILE_BATCH_CHUNK_DONE",
+                {
+                    "source": seed_source,
+                    "chunk_index": chunk_index,
+                    "chunk_count": len(chunks),
+                    "notes_created": chunk_result.notes_created,
+                    "notes_updated": chunk_result.notes_updated,
+                },
             )
-            return _empty_compile_result()
 
         await emit_event(
             self._event_bus,
@@ -195,6 +326,7 @@ class IngestCompiler:
             llm_calls=llm_calls,
             updated=notes_updated,
             created=notes_created,
+            chunk_failures=chunk_failures,
         )
         return CompileResult(
             actions_taken=actions_taken,
@@ -228,22 +360,32 @@ class IngestCompiler:
         raw = await self._llm.chat(
             system=COMPILE_BATCH_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_msg}],
+            suppress_reasoning=True,
         )
         return self._parse_plan(raw)
 
     def _parse_plan(self, raw: str) -> list[dict[str, Any]]:
-        """Parse LLM response as JSON array of actions."""
+        """Parse LLM response as JSON array of actions.
+
+        Robust against three known failure modes:
+        - markdown code fences (```json ... ```)
+        - reasoning-model preamble that survives suppression (e.g.
+          stray ``<think>...`` even with ``thinking={"type": "disabled"}``)
+        - trailing commentary after the array
+        """
         text = raw.strip()
-        # Try to extract JSON array if wrapped in markdown code block
-        if "```" in text:
-            start = text.find("[")
-            end = text.rfind("]")
-            if start != -1 and end != -1:
-                text = text[start : end + 1]
+        # Pull out the first ``[`` through the matching last ``]`` —
+        # everything outside is preamble/postamble we don't trust.
+        start = text.find("[")
+        end = text.rfind("]")
+        if start == -1 or end == -1 or end <= start:
+            logger.warning("ingest_compile_parse_no_array", raw=text[:200])
+            return []
+        candidate = text[start : end + 1]
         try:
-            parsed = json.loads(text)
+            parsed = json.loads(candidate)
         except (json.JSONDecodeError, ValueError):
-            logger.warning("ingest_compile_parse_failed", raw=text[:200])
+            logger.warning("ingest_compile_parse_failed", raw=candidate[:200])
             return []
         if not isinstance(parsed, list):
             return []
@@ -259,33 +401,42 @@ class IngestCompiler:
             if not self._validate_action(raw_action):
                 continue
 
+            tags = _clean_tags(raw_action.get("tags") or [])
+            entities = _clean_entities(raw_action.get("entities") or [], raw_action["content"])
+
             action = UpdateAction(
                 action=raw_action["action"],
                 target_path=raw_action.get("target_path"),
                 title=raw_action["title"],
                 content=raw_action["content"],
-                note_type=raw_action["note_type"],
                 reason=raw_action["reason"],
+                tags=tags,
+                entities=entities,
                 related=raw_action.get("related", []),
             )
 
             try:
                 if action.action == "create":
-                    await self._writer.write_garden(
+                    written_path = await self._writer.write_garden(
                         GardenNote(
                             title=action.title,
                             content=action.content,
-                            note_type=action.note_type,
                             source="ingest-compiler",
+                            tags=action.tags,
+                            entities=action.entities,
                             related=action.related,
                         )
                     )
                     notes_created += 1
                 elif action.action == "update" and action.target_path:
-                    await self._writer.update_note(action.target_path, action.content)
+                    written_path = await self._writer.update_note(
+                        action.target_path, action.content
+                    )
                     notes_updated += 1
                 elif action.action == "append" and action.target_path:
-                    await self._writer.append_to_note(action.target_path, action.content)
+                    written_path = await self._writer.append_to_note(
+                        action.target_path, action.content
+                    )
                     notes_updated += 1
                 else:
                     logger.warning("ingest_compile_invalid_action", action=action.action)
@@ -300,12 +451,39 @@ class IngestCompiler:
                 continue
 
             actions_taken.append(action)
+            # Ensure every wikilink target has a real vault file so the
+            # graph extractor's ``WIKILINK_RE`` sweep finds nodes on both
+            # ends. Cleaned by ``_clean_entities`` already, so each item
+            # is a valid ``[[Name]]`` actually present in the body.
+            await self._ensure_entity_stubs(action.entities, written_path)
 
         return CompileResult(
             actions_taken=actions_taken,
             notes_updated=notes_updated,
             notes_created=notes_created,
         )
+
+    async def _ensure_entity_stubs(self, entities: list[str], mentioned_in: Path | None) -> None:
+        """Best-effort: create / refresh a stub for every ``[[Name]]`` mentioned.
+
+        Failures are logged but never propagated — a single bad entity (e.g.
+        slug that escapes vault boundary) must not abort the whole compile.
+        """
+        if not mentioned_in:
+            return
+        for wikilink in entities:
+            match = _WIKILINK_PATTERN.match(wikilink.strip())
+            if not match:
+                continue
+            name = match.group(1).strip()
+            try:
+                await self._writer.ensure_entity_stub(name, mentioned_in)
+            except (OSError, ValueError) as exc:
+                logger.warning(
+                    "ingest_compile_entity_stub_failed",
+                    name=name,
+                    error=str(exc),
+                )
 
     def _validate_action(self, raw: dict[str, Any]) -> bool:
         """Check that raw action dict has all required fields."""
@@ -318,6 +496,64 @@ class IngestCompiler:
         if raw["action"] not in ("create", "update", "append"):
             return False
         return not (raw["action"] in ("update", "append") and not raw.get("target_path"))
+
+
+def _clean_tags(raw_tags: Any) -> list[str]:
+    """Filter LLM-emitted tags to the documented contract.
+
+    Drops kind tags ("idea", "fact"...) the prompt explicitly forbids,
+    rejects values that don't match the lowercase-hyphen pattern, dedupes,
+    and caps at ``_MAX_TAGS_PER_ACTION``.
+    """
+    if not isinstance(raw_tags, list):
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for tag in raw_tags:
+        if not isinstance(tag, str):
+            continue
+        normalised = tag.strip().lower()
+        if not normalised or normalised in seen:
+            continue
+        if normalised in _KIND_TAG_BLOCKLIST:
+            continue
+        if not _TAG_PATTERN.match(normalised):
+            continue
+        cleaned.append(normalised)
+        seen.add(normalised)
+        if len(cleaned) >= _MAX_TAGS_PER_ACTION:
+            break
+    return cleaned
+
+
+def _clean_entities(raw_entities: Any, content: str) -> list[str]:
+    """Drop entities that don't appear as ``[[wikilinks]]`` in ``content``.
+
+    Anti-hallucination guard: the LLM is told every entity must also be
+    in the body; we enforce it. Items that aren't in ``[[Name]]`` shape
+    or whose target name doesn't appear inside any wikilink in ``content``
+    are silently dropped.
+    """
+    if not isinstance(raw_entities, list):
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for entity in raw_entities:
+        if not isinstance(entity, str):
+            continue
+        match = _WIKILINK_PATTERN.match(entity.strip())
+        if not match:
+            continue
+        canonical = f"[[{match.group(1).strip()}]]"
+        if canonical in seen:
+            continue
+        # The exact wikilink (case-sensitive) must appear in the body —
+        # otherwise the LLM invented it.
+        if canonical not in content:
+            continue
+        cleaned.append(canonical)
+        seen.add(canonical)
+    return cleaned
 
 
 def _chunk_batch(items: list[BatchItem], char_budget: int) -> list[list[BatchItem]]:

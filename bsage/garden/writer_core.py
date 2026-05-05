@@ -31,7 +31,6 @@ import yaml
 from bsage.core.events import emit_event
 from bsage.garden.note import (
     _MAX_ACTION_SUMMARY,
-    _VALID_NOTE_TYPES,
     GardenNote,
     build_frontmatter,
     slugify,
@@ -95,14 +94,25 @@ class _WriterIOMixin:
     ) -> Path:  # pragma: no cover - implemented in GardenWriter
         ...
 
-    def _resolve_folder(self, note_type: str) -> str:
-        """Resolve the vault folder for a note type using ontology mapping."""
-        if self._ontology:
-            folder = self._ontology.get_entity_folder(note_type)
-            if folder:
-                return folder.rstrip("/")
-        # Fallback: use type name as folder (e.g. "idea" → "ideas")
-        return f"{note_type}s" if not note_type.endswith("s") else note_type
+    def _resolve_folder(self, note: GardenNote | None = None) -> str:
+        """Resolve the vault folder for a note from its maturity.
+
+        Andy Matuschak-style three-stage layout: ``garden/seedling``
+        (just captured), ``garden/budding`` (in progress), and
+        ``garden/evergreen`` (curated). Identity comes from connections,
+        not from note kind, so the folder reflects where in the growth
+        cycle the note sits — not what it's about.
+
+        ``None`` defaults to ``seedling`` for the bulk-import path. Any
+        unrecognised maturity string falls back to ``seedling`` so a
+        typo in frontmatter doesn't strand a note in some
+        ``garden/banana/`` folder.
+        """
+        valid = {"seedling", "budding", "evergreen"}
+        maturity = (note.maturity if note else None) or "seedling"
+        if maturity not in valid:
+            maturity = "seedling"
+        return f"garden/{maturity}"
 
     def resolve_plugin_state_path(self, plugin_name: str, subpath: str = "_state.json") -> Path:
         """Resolve a plugin state file path within the vault.
@@ -207,8 +217,10 @@ class _WriterIOMixin:
             date_str = now.strftime("%Y-%m-%d")
             slug = slugify(note.title)
 
-            # v2.2: resolve folder from ontology or fall back to type name
-            folder = self._resolve_folder(note.note_type)
+            # Maturity-based layout: garden/seedling, /budding, /evergreen.
+            # Folder no longer reflects what the note is ABOUT — only where
+            # in the growth cycle it sits.
+            folder = self._resolve_folder(note)
             type_dir = self._vault.resolve_path(folder)
             type_dir.mkdir(parents=True, exist_ok=True)
 
@@ -219,13 +231,19 @@ class _WriterIOMixin:
             related_links = [f"[[{r}]]" for r in note.related]
 
             metadata: dict = {
-                "type": note.note_type,
                 "status": "seed",
                 "source": note.source,
+                "maturity": note.maturity,
                 "captured_at": date_str,
                 "confidence": note.confidence,
                 "knowledge_layer": note.knowledge_layer,
             }
+            # Legacy ``type:`` field — kept only when the caller explicitly
+            # set note_type (back-compat with vaults from before the
+            # dynamic-ontology refactor). New writes leave it absent so
+            # tags + entities + community carry the meaning.
+            if note.note_type:
+                metadata["type"] = note.note_type
             # Phase 0 P0.5 — tenant isolation: stamp tenant_id into frontmatter
             # so retrieval can filter by tenant. Falls back to writer default
             # when the caller didn't specify (cron, migration backfill).
@@ -244,6 +262,8 @@ class _WriterIOMixin:
                 metadata["related"] = related_links
             if note.tags:
                 metadata["tags"] = note.tags
+            if note.entities:
+                metadata["entities"] = note.entities
 
             frontmatter = build_frontmatter(metadata)
             content = f"{frontmatter}\n# {note.title}\n\n{note.content}\n"
@@ -267,6 +287,52 @@ class _WriterIOMixin:
             note_type=note.note_type,
             tenant_id=tenant_id,
         )
+        return file_path
+
+    async def ensure_entity_stub(self, name: str, mentioned_in: Path) -> Path:
+        """Auto-create or update a ``garden/entities/<slug>.md`` stub for ``[[name]]``.
+
+        Called from ``IngestCompiler._execute_plan`` after every batch — every
+        wikilink target the LLM extracted gets a real vault file so the graph
+        extractor's ``WIKILINK_RE`` finds something to link to. Without this,
+        ``[[Vaultwarden]]`` in body text would dangle forever.
+
+        Idempotent. When the stub already exists:
+        * if it's still an auto-stub, append the new mention path to its
+          ``mentions:`` list (deduped) and refresh the body's ``Mentioned in``
+          section.
+        * if a human has filled it in (``auto_stub: false`` or absent), leave
+          the body alone — only update the ``mentions:`` list in frontmatter.
+
+        Args:
+            name: Bare entity name (no ``[[ ]]``). Slugified for the path.
+            mentioned_in: Vault-relative path of the note that linked here.
+
+        Returns:
+            Path to the stub file.
+        """
+        clean = name.strip()
+        if not clean:
+            raise ValueError("ensure_entity_stub requires a non-empty name")
+        slug = slugify(clean)
+
+        async with self._garden_lock:
+            entities_dir = self._vault.resolve_path("garden/entities")
+            entities_dir.mkdir(parents=True, exist_ok=True)
+            file_path = entities_dir / f"{slug}.md"
+
+            try:
+                rel_mention = mentioned_in.relative_to(self._vault.root)
+                rel_str = str(rel_mention)
+            except ValueError:
+                rel_str = str(mentioned_in)
+
+            if file_path.exists():
+                _update_entity_stub_mentions(file_path, rel_str)
+            else:
+                _create_entity_stub(file_path, clean, rel_str)
+
+        logger.debug("entity_stub_ensured", name=clean, path=str(file_path))
         return file_path
 
     async def write_action(self, skill_name: str, summary: str) -> None:
@@ -441,26 +507,39 @@ class _WriterMutationMixin:
 
         evaluator = MaturityEvaluator(graph, config)
 
-        # v2.2: scan all entity-type folders, not just garden/
-        scan_dirs = [
-            "ideas",
-            "insights",
-            "projects",
-            "people",
-            "events",
-            "tasks",
-            "facts",
-            "preferences",
-        ]
-        # Also scan legacy garden/ if it exists
-        scan_dirs.append("garden")
+        # Maturity-based layout: scan the seedling/budding/evergreen tree
+        # plus any other ``garden/<subdir>/`` (legacy ``garden/idea/`` etc.)
+        # plus any non-system top-level directory (very legacy ``ideas/``).
+        # Notes already in the right maturity folder are picked up once;
+        # notes in legacy paths are found and promoted in place (the
+        # migration CLI handles the actual move).
+        legacy_skip = {"seeds", "actions", "tmp", "node_modules", "garden", ".bsage"}
 
         def _collect_md() -> list[Path]:
             files: list[Path] = []
-            for d in scan_dirs:
-                base = self._vault.root / d
+            seen: set[Path] = set()
+
+            def _add(base: Path) -> None:
+                resolved = base.resolve()
+                if resolved in seen:
+                    return
+                seen.add(resolved)
                 if base.is_dir():
                     files.extend(base.rglob("*.md"))
+
+            garden_root = self._vault.root / "garden"
+            if garden_root.is_dir():
+                for child in garden_root.iterdir():
+                    if child.is_dir() and not child.name.startswith((".", "_")):
+                        _add(child)
+
+            for child in sorted(self._vault.root.iterdir()):
+                if not child.is_dir() or child.name.startswith((".", "_")):
+                    continue
+                if child.name in legacy_skip:
+                    continue
+                _add(child)
+
             return sorted(files)
 
         md_files = await asyncio.to_thread(_collect_md)
@@ -472,26 +551,91 @@ class _WriterMutationMixin:
             content = await asyncio.to_thread(md_file.read_text, "utf-8")
             fm = extract_frontmatter(content)
             current_status = fm.get("status", "seed")
+            current_maturity = fm.get("maturity") or _maturity_from_status(current_status)
 
             new_status = await evaluator.evaluate(rel_path, current_status)
-            if new_status is not None:
-                await self.update_frontmatter_status(md_file, new_status.value)
-                promoted += 1
-                details.append(
-                    {
-                        "path": rel_path,
-                        "from": current_status,
-                        "to": new_status.value,
-                    }
-                )
-                logger.info(
-                    "note_promoted",
-                    path=rel_path,
-                    from_status=current_status,
-                    to_status=new_status.value,
-                )
+            if new_status is None:
+                continue
+
+            # MaturityEvaluator returns NoteMaturity values which already
+            # speak the seedling/budding/evergreen vocabulary used by the
+            # folder layout — promote both the legacy ``status`` field and
+            # the new ``maturity`` field, then move the file when the
+            # destination folder changes.
+            target_maturity = new_status.value
+            new_path = await self._apply_maturity_promotion(
+                md_file=md_file,
+                target_maturity=target_maturity,
+                current_maturity=current_maturity,
+            )
+            promoted += 1
+            details.append(
+                {
+                    "path": str(new_path.relative_to(self._vault.root)),
+                    "from": current_status,
+                    "to": target_maturity,
+                }
+            )
+            logger.info(
+                "note_promoted",
+                path=rel_path,
+                from_status=current_status,
+                to_status=target_maturity,
+                new_path=str(new_path.relative_to(self._vault.root)),
+            )
 
         return {"promoted": promoted, "checked": len(md_files), "details": details}
+
+    async def _apply_maturity_promotion(
+        self,
+        *,
+        md_file: Path,
+        target_maturity: str,
+        current_maturity: str,
+    ) -> Path:
+        """Update frontmatter ``status`` + ``maturity`` and move file when the
+        target folder changes. Returns the (possibly new) path."""
+        await self.update_frontmatter_status(md_file, target_maturity)
+        await self._set_frontmatter_field(md_file, "maturity", target_maturity)
+
+        if target_maturity == current_maturity:
+            return md_file
+        if not str(md_file).startswith(str(self._vault.root)):
+            return md_file
+        rel = md_file.relative_to(self._vault.root)
+        # Only auto-move notes that already live in the maturity tree —
+        # legacy paths get left in place for the migration CLI.
+        if not str(rel).startswith("garden/"):
+            return md_file
+
+        target_dir = self._vault.resolve_path(f"garden/{target_maturity}")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        new_path = target_dir / md_file.name
+        if new_path == md_file:
+            return md_file
+        if new_path.exists():
+            new_path = self._find_dedup_path(target_dir, md_file.stem)
+        await asyncio.to_thread(md_file.rename, new_path)
+        return new_path
+
+    async def _set_frontmatter_field(self, path: Path, key: str, value: Any) -> None:
+        """Set a single frontmatter field, preserving body and other fields."""
+        async with self._garden_lock:
+            text = await asyncio.to_thread(path.read_text, "utf-8")
+            if not text.startswith("---\n"):
+                return
+            closing = text.find("\n---\n", 4)
+            if closing == -1:
+                return
+            try:
+                fm = yaml.safe_load(text[4:closing]) or {}
+            except yaml.YAMLError:
+                return
+            if not isinstance(fm, dict):
+                return
+            fm[key] = value
+            new_text = build_frontmatter(fm) + text[closing + 5 :]
+            await asyncio.to_thread(path.write_text, new_text, encoding="utf-8")
 
     async def update_note(
         self, path: str, content: str, *, preserve_frontmatter: bool = True
@@ -589,12 +733,15 @@ class _WriterMutationMixin:
         await self._notify_sync("garden", abs_path, "update")
         await emit_event(self._event_bus, "NOTE_UPDATED", {"path": note_path})
 
-    async def append_to_note(self, path: str, text: str) -> None:
+    async def append_to_note(self, path: str, text: str) -> Path:
         """Append text to an existing vault note.
 
         Args:
             path: Vault-relative path.
             text: Text to append.
+
+        Returns:
+            Resolved absolute path to the appended-to file.
 
         Raises:
             FileNotFoundError: If the note does not exist.
@@ -617,6 +764,7 @@ class _WriterMutationMixin:
             operation="note_appended",
             source="update",
         )
+        return resolved
 
     async def delete_note(self, path: str) -> None:
         """Delete a note from the vault.
@@ -664,7 +812,7 @@ class _WriterToolHandlersMixin:
 
     async def append_to_note(
         self, path: str, text: str
-    ) -> None:  # pragma: no cover - in mutation mixin
+    ) -> Path:  # pragma: no cover - in mutation mixin
         ...
 
     async def delete_note(self, path: str) -> None:  # pragma: no cover - in mutation mixin
@@ -684,22 +832,19 @@ class _WriterToolHandlersMixin:
         """
         title = args.get("title", "Untitled")
         content = args.get("content", "")
-        note_type = args.get("note_type", "idea")
         tags = args.get("tags", [])
-
-        if note_type not in _VALID_NOTE_TYPES:
-            note_type = "idea"
+        entities = args.get("entities", [])
 
         path = await self.write_garden(
             {
                 "title": title,
                 "content": content,
-                "note_type": note_type,
                 "source": "chat",
                 "tags": tags,
+                "entities": entities,
             }
         )
-        return {"status": "saved", "title": title, "note_type": note_type, "path": str(path)}
+        return {"status": "saved", "title": title, "path": str(path)}
 
     async def handle_write_seed(self, args: dict[str, Any]) -> dict[str, Any]:
         """Handle a write-seed tool call from the LLM.
@@ -918,6 +1063,101 @@ class GardenWriter(_WriterIOMixin, _WriterMutationMixin, _WriterToolHandlersMixi
         # Fallback: use timestamp-based name to guarantee uniqueness
         ts = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S%f")
         return directory / f"{slug}_{ts}.md"
+
+
+def _maturity_from_status(status: str) -> str:
+    """Map a legacy ``status:`` value onto the maturity vocabulary.
+
+    Pre-refactor notes wrote ``status: seed | growing | evergreen``. The
+    new layout uses ``maturity: seedling | budding | evergreen``. The
+    promote_maturity migration writes both fields; this helper covers
+    pre-migration reads so the comparison "did the maturity change?"
+    works on legacy notes.
+    """
+    mapping = {
+        "seed": "seedling",
+        "seedling": "seedling",
+        "growing": "budding",
+        "budding": "budding",
+        "evergreen": "evergreen",
+    }
+    return mapping.get(status.strip().lower(), "seedling")
+
+
+def _create_entity_stub(file_path: Path, name: str, first_mention: str) -> None:
+    """Write a brand-new auto-stub file for ``[[name]]``."""
+    now_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    metadata = {
+        "title": name,
+        "created": now_iso,
+        "maturity": "seedling",
+        "auto_stub": True,
+        "mentions": [first_mention],
+    }
+    body = (
+        f"\n# {name}\n\n"
+        f"> Auto-generated entity stub for [[{name}]]. "
+        "Filled in as it gets mentioned.\n\n"
+        "## Mentioned in\n\n"
+        f"- [[{Path(first_mention).stem}]]\n"
+    )
+    file_path.write_text(build_frontmatter(metadata) + body, encoding="utf-8")
+
+
+def _update_entity_stub_mentions(file_path: Path, mention: str) -> None:
+    """Append ``mention`` to an existing entity stub idempotently.
+
+    Touches frontmatter ``mentions:`` always; rewrites the ``## Mentioned in``
+    section only when the stub is still an auto-stub (the user hasn't taken
+    it over yet).
+    """
+    raw = file_path.read_text(encoding="utf-8")
+    fm, body = _split_frontmatter(raw)
+    mentions = list(fm.get("mentions") or [])
+    if mention in mentions:
+        return
+    mentions.append(mention)
+    fm["mentions"] = mentions
+
+    is_auto_stub = bool(fm.get("auto_stub"))
+    if is_auto_stub:
+        body = _rewrite_mentioned_in_section(body, mentions)
+
+    file_path.write_text(build_frontmatter(fm) + body, encoding="utf-8")
+
+
+def _split_frontmatter(raw: str) -> tuple[dict, str]:
+    """Split a markdown file with leading ``---`` frontmatter into (dict, body)."""
+    if not raw.startswith("---\n"):
+        return {}, raw
+    closing = raw.find("\n---\n", 4)
+    if closing == -1:
+        return {}, raw
+    fm_text = raw[4:closing]
+    body = raw[closing + 5 :]
+    try:
+        fm = yaml.safe_load(fm_text) or {}
+    except yaml.YAMLError:
+        return {}, raw
+    if not isinstance(fm, dict):
+        return {}, raw
+    return fm, body
+
+
+def _rewrite_mentioned_in_section(body: str, mentions: list[str]) -> str:
+    """Replace the ``## Mentioned in`` block with the latest mentions list."""
+    marker = "## Mentioned in"
+    items = "\n".join(f"- [[{Path(m).stem}]]" for m in mentions)
+    new_section = f"{marker}\n\n{items}\n"
+    idx = body.find(marker)
+    if idx == -1:
+        # Stub had no section yet — append one.
+        return body.rstrip() + "\n\n" + new_section
+    # Cut from the marker through the next H2 (or end of file).
+    after = body.find("\n## ", idx + len(marker))
+    if after == -1:
+        return body[:idx] + new_section
+    return body[:idx] + new_section + body[after:]
 
 
 __all__ = ["GardenWriter"]

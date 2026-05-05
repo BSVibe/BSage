@@ -465,6 +465,93 @@ def mcp_serve() -> None:
     stdio_main()
 
 
+@main.command("migrate-flatten-vault")
+@click.option(
+    "--apply",
+    "do_apply",
+    is_flag=True,
+    help="Actually move files. Default is a dry-run that only prints the plan.",
+)
+@click.option(
+    "--revert",
+    "do_revert",
+    is_flag=True,
+    help="Reverse a previous migration using each note's `_pre_migration_path`.",
+)
+@click.option(
+    "--no-backup",
+    "no_backup",
+    is_flag=True,
+    help="Skip the safety snapshot under <vault>/.bsage/migration-backup-... .",
+)
+def cli_migrate_flatten_vault(do_apply: bool, do_revert: bool, no_backup: bool) -> None:
+    """Migrate vault from legacy entity-type folders to the maturity layout.
+
+    Walks ``ideas/``, ``insights/``, ``projects/``, ``garden/idea/``, ... and
+    moves every note into ``garden/<maturity>/`` (default ``seedling``,
+    preserved when the note already declares ``maturity:`` in frontmatter).
+    The legacy ``type:`` field becomes a tag, and each migrated note is
+    stamped with ``_pre_migration_path:`` so ``--revert`` can put it back.
+
+    \b
+    Modes (mutually exclusive):
+      no flag      → dry-run; prints what would change.
+      --apply      → execute the migration. Backs up the touched folders
+                     into ``<vault>/.bsage/migration-backup-...`` first
+                     (use ``--no-backup`` to skip).
+      --revert     → undo a previous migration in-place.
+    """
+    if do_apply and do_revert:
+        msg = "--apply and --revert are mutually exclusive"
+        raise click.BadParameter(msg)
+
+    from bsage.garden import migrations
+
+    settings = get_settings()
+    vault_root = Path(settings.vault_path).expanduser().resolve()
+    if not vault_root.exists():
+        click.echo(f"Vault not found at {vault_root}", err=True)
+        raise SystemExit(1) from None
+
+    if do_revert:
+        plan = migrations.revert_flatten(vault_root)
+        click.echo(f"Reverted {plan.total} note(s) from the maturity tree.")
+        for entry in plan.moves:
+            click.echo(f"  {entry.src.name} → {entry.dst.relative_to(vault_root)}")
+        if plan.skipped:
+            click.echo(
+                f"Skipped {len(plan.skipped)} note(s) (no _pre_migration_path or read failed)."
+            )
+        return
+
+    if do_apply:
+        plan = migrations.apply_flatten(vault_root, backup=not no_backup)
+        click.echo(f"Migrated {plan.total} note(s) into the maturity layout.")
+        for entry in plan.moves:
+            tag_str = ", ".join(entry.new_tags) if entry.new_tags else "—"
+            click.echo(
+                f"  {entry.src.relative_to(vault_root)}"
+                f"  →  {entry.dst.relative_to(vault_root)}    tags=[{tag_str}]"
+            )
+        if plan.skipped:
+            click.echo(f"Skipped {len(plan.skipped)} note(s) (parse failed or no frontmatter).")
+        if not no_backup:
+            click.echo("Backup saved under <vault>/.bsage/migration-backup-flatten-* .")
+        return
+
+    plan = migrations.plan_flatten(vault_root)
+    click.echo(f"DRY RUN — would migrate {plan.total} note(s) into the maturity layout.")
+    for entry in plan.moves:
+        legacy = entry.legacy_type or "—"
+        click.echo(
+            f"  {entry.src.relative_to(vault_root)}"
+            f"  →  {entry.dst.relative_to(vault_root)}    type={legacy}"
+        )
+    if plan.skipped:
+        click.echo(f"Would skip {len(plan.skipped)} note(s) (no parseable frontmatter).")
+    click.echo("Re-run with --apply to execute.")
+
+
 @main.command("search")
 @click.argument("query")
 @click.option("--top-k", default=10, type=int)

@@ -15,7 +15,6 @@ import yaml
 
 from bsage.garden.note import (
     _MAX_ACTION_SUMMARY,
-    _VALID_NOTE_TYPES,
     GardenNote,
     _build_frontmatter,
     _slugify,
@@ -26,51 +25,41 @@ from bsage.garden.note import (
 
 class TestGardenNoteDataclass:
     def test_minimum_fields(self) -> None:
-        note = GardenNote(title="t", content="c", note_type="idea", source="src")
+        note = GardenNote(title="t", content="c", source="src")
         assert note.title == "t"
         assert note.content == "c"
-        assert note.note_type == "idea"
         assert note.source == "src"
+        # note_type is now an opt-in compatibility field — defaults to None
+        # since identity comes from tags + entities + community.
+        assert note.note_type is None
+
+    def test_note_type_optional_for_backwards_compat(self) -> None:
+        # Reading a vault written before the dynamic-ontology refactor
+        # must not crash — the field still accepts the old enum values.
+        note = GardenNote(title="t", content="c", source="src", note_type="idea")
+        assert note.note_type == "idea"
 
     def test_collection_defaults_are_independent(self) -> None:
-        a = GardenNote(title="a", content="", note_type="idea", source="src")
-        b = GardenNote(title="b", content="", note_type="idea", source="src")
+        a = GardenNote(title="a", content="", source="src")
+        b = GardenNote(title="b", content="", source="src")
         a.tags.append("x")
+        a.entities.append("[[E]]")
         a.related.append("y")
         a.relations.setdefault("attendees", []).append("z")
         a.aliases.append("alpha")
         a.extra_fields["k"] = "v"
         # b must not share state (default_factory invariant)
         assert b.tags == []
+        assert b.entities == []
         assert b.related == []
         assert b.relations == {}
         assert b.aliases == []
         assert b.extra_fields == {}
 
     def test_default_confidence_and_layer(self) -> None:
-        note = GardenNote(title="t", content="c", note_type="idea", source="s")
+        note = GardenNote(title="t", content="c", source="s")
         assert note.confidence == pytest.approx(0.9)
         assert note.knowledge_layer == "semantic"
-
-
-class TestValidNoteTypes:
-    def test_contains_canonical_types(self) -> None:
-        for required in (
-            "idea",
-            "insight",
-            "project",
-            "event",
-            "task",
-            "fact",
-            "person",
-            "preference",
-        ):
-            assert required in _VALID_NOTE_TYPES
-
-    def test_is_immutable(self) -> None:
-        # frozenset cannot be mutated
-        with pytest.raises(AttributeError):
-            _VALID_NOTE_TYPES.add("bogus")  # type: ignore[attr-defined]
 
 
 class TestSlugify:
