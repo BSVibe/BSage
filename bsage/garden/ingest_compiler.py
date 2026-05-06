@@ -20,6 +20,7 @@ from bsage.garden.writer import GardenNote
 if TYPE_CHECKING:
     from bsage.core.events import EventBus
     from bsage.core.skill_context import LLMClient
+    from bsage.garden.canonicalization.service import CanonicalizationService
     from bsage.garden.retriever import VaultRetriever
     from bsage.garden.writer import GardenWriter
 
@@ -202,6 +203,7 @@ class IngestCompiler:
         max_updates: int = 10,
         batch_char_budget: int | None = None,
         chunk_timeout_s: float | None = 300.0,
+        canonicalization_service: CanonicalizationService | None = None,
     ) -> None:
         self._writer = garden_writer
         self._llm = llm_client
@@ -216,6 +218,10 @@ class IngestCompiler:
         # finish without hitting the litellm 60s default and triggering
         # a retry loop. Set to ``None`` to use bsvibe-llm's default.
         self._chunk_timeout_s = chunk_timeout_s
+        # Canonicalization service (Handoff §11). When wired, every cleaned
+        # raw tag is run through the resolver before landing in the garden
+        # note. Unresolved/ambiguous/blocked tags are dropped per spec.
+        self._canon_service = canonicalization_service
 
     async def compile_batch(
         self,
@@ -409,6 +415,7 @@ class IngestCompiler:
                 continue
 
             tags = _clean_tags(raw_action.get("tags") or [])
+            tags = await self._canonicalize_tags(tags, raw_source="ingest-compiler")
             entities = _clean_entities(raw_action.get("entities") or [], raw_action["content"])
 
             action = UpdateAction(
@@ -491,6 +498,36 @@ class IngestCompiler:
                     name=name,
                     error=str(exc),
                 )
+
+    async def _canonicalize_tags(self, tags: list[str], *, raw_source: str) -> list[str]:
+        """Resolve cleaned tags to canonical concept ids (Handoff §11).
+
+        Tags that resolve to existing concepts (or auto-create a new one)
+        land in the garden note. Tags returning None
+        (ambiguous/blocked/pending_candidate/auto-apply-failed) are dropped
+        per spec — their evidence lives on the action/proposal record.
+        """
+        if self._canon_service is None or not tags:
+            return tags
+        canonical: list[str] = []
+        seen: set[str] = set()
+        for raw_tag in tags:
+            try:
+                resolved = await self._canon_service.resolve_and_canonicalize(
+                    raw_tag, raw_source=raw_source
+                )
+            except Exception as exc:  # noqa: BLE001 — never abort ingest on resolve error
+                logger.warning(
+                    "ingest_compile_canonicalize_failed",
+                    raw_tag=raw_tag,
+                    error=str(exc),
+                )
+                continue
+            if resolved is None or resolved in seen:
+                continue
+            canonical.append(resolved)
+            seen.add(resolved)
+        return canonical
 
     def _validate_action(self, raw: dict[str, Any]) -> bool:
         """Check that raw action dict has all required fields."""

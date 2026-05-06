@@ -56,6 +56,51 @@ class ConceptEntry:
 
 
 @dataclass
+class TombstoneEntry:
+    """Merged-concept tombstone (Handoff §3.2)."""
+
+    old_id: str
+    path: str
+    merged_into: str
+    merged_at: datetime
+    source_action: str | None = None
+
+
+@dataclass
+class DeprecatedEntry:
+    """Deprecated concept registry entry (Handoff §3.3)."""
+
+    concept_id: str
+    path: str
+    deprecated_at: datetime
+    replacement: str | None = None
+    reason: str | None = None
+    source_action: str | None = None
+
+
+@dataclass
+class ResolveResult:
+    """Tag resolution outcome (Handoff §11, Class_Diagram §6)."""
+
+    status: str
+    concept_id: str | None = None
+    redirected_from: str | None = None
+    ambiguous_candidates: list[str] = field(default_factory=list)
+    pending_draft: str | None = None
+    deprecated_replacement: str | None = None
+
+
+# Per Handoff §11
+RESOLVE_STATUSES: tuple[str, ...] = (
+    "resolved",
+    "new_candidate",
+    "ambiguous",
+    "blocked",
+    "pending_candidate",
+)
+
+
+@dataclass
 class ValidationResult:
     """Validation outcome embedded in action frontmatter (Handoff §6, §13)."""
 
@@ -126,6 +171,10 @@ class ActionEntry:
     affected_paths: list[str] = field(default_factory=list)
     supersedes: list[str] = field(default_factory=list)
     superseded_by: str | None = None
+    # Cross-cutting provenance evidence (Handoff §11 ingest_pending_candidate
+    # is appended here when a duplicate ingest sighting links to an existing
+    # non-terminal draft).
+    evidence: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
