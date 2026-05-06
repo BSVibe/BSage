@@ -1,8 +1,9 @@
-"""``bsage canon`` — CLI shim across slices 1-3."""
+"""``bsage canon`` — CLI shim across slices 1-4."""
 
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,9 +12,14 @@ import structlog
 
 from bsage.core.config import get_settings
 from bsage.garden.canonicalization import paths as canon_paths
+from bsage.garden.canonicalization.decisions import DecisionMemory
 from bsage.garden.canonicalization.index import InMemoryCanonicalizationIndex
 from bsage.garden.canonicalization.lock import AsyncIOMutationLock
-from bsage.garden.canonicalization.proposals import DeterministicProposer
+from bsage.garden.canonicalization.policies import PolicyResolver
+from bsage.garden.canonicalization.proposals import (
+    BalancedProposer,
+    DeterministicProposer,
+)
 from bsage.garden.canonicalization.resolver import TagResolver
 from bsage.garden.canonicalization.service import CanonicalizationService
 from bsage.garden.canonicalization.store import NoteStore
@@ -29,11 +35,16 @@ async def _build_service_async(
     storage = FileSystemStorage(vault_path)
     index = InMemoryCanonicalizationIndex()
     await index.initialize(storage)
+    store = NoteStore(storage)
+    decisions = DecisionMemory(index=index, store=store)
+    policy_resolver = PolicyResolver(index=index, store=store)
     service = CanonicalizationService(
-        store=NoteStore(storage),
+        store=store,
         lock=AsyncIOMutationLock(),
         index=index,
         resolver=TagResolver(index=index),
+        decisions=decisions,
+        policies=policy_resolver,
     )
     return service, storage
 
@@ -189,10 +200,11 @@ def apply_cmd(action_path: str) -> None:
 @canon_group.command("propose")
 @click.option(
     "--strategy",
-    type=click.Choice(["deterministic"]),
+    type=click.Choice(["deterministic", "balanced"]),
     default="deterministic",
     show_default=True,
-    help="Proposal generation strategy. Slice 3 ships 'deterministic' only.",
+    help="Proposal strategy. 'balanced' adds embedding KNN + LLM verify slots "
+    "(real model wiring lands at gateway boot in slice 5).",
 )
 @click.option(
     "--threshold",
@@ -205,11 +217,19 @@ def propose_cmd(strategy: str, threshold: float) -> None:
     """Generate review-candidate merge proposals."""
 
     async def _go(service, _storage):
-        proposer = DeterministicProposer(
-            index=service._index,
-            store=service._store,
-            threshold=threshold,
-        )
+        if strategy == "balanced":
+            proposer = BalancedProposer(
+                index=service._index,
+                store=service._store,
+                threshold=threshold,
+                decisions=service._decisions,
+            )
+        else:
+            proposer = DeterministicProposer(
+                index=service._index,
+                store=service._store,
+                threshold=threshold,
+            )
         return await proposer.generate()
 
     paths_created = _run_with_service(_go)
@@ -260,7 +280,29 @@ def list_proposals_cmd(status: str, kind: str | None) -> None:
     help="Mark proposal rejected (linked drafts left alone).",
 )
 @click.option("--reason", default=None, help="Optional reason for rejection.")
-def review_cmd(proposal_path: str, decision: str | None, reason: str | None) -> None:
+@click.option(
+    "--as-cannot-link",
+    "as_cannot_link",
+    is_flag=True,
+    help=(
+        "After rejecting, persist a cannot-link decision between the proposal's "
+        "merge subjects so future proposers learn from the decision (Handoff §8.1)."
+    ),
+)
+@click.option(
+    "--confidence",
+    type=float,
+    default=0.95,
+    show_default=True,
+    help="base_confidence for the cannot-link decision when --as-cannot-link is set.",
+)
+def review_cmd(
+    proposal_path: str,
+    decision: str | None,
+    reason: str | None,
+    as_cannot_link: bool,
+    confidence: float,
+) -> None:
     """Review a proposal — print evidence, then optionally accept/reject."""
 
     async def _summary(service, storage):
@@ -285,10 +327,16 @@ def review_cmd(proposal_path: str, decision: str | None, reason: str | None) -> 
 
     if decision is None:
         # Read-only review: nothing else to do.
+        if as_cannot_link:
+            click.echo("--as-cannot-link requires --reject (or --accept).", err=True)
+            raise SystemExit(2)
         return
     if proposal.status != "pending":
         click.echo(f"cannot {decision}: proposal status is {proposal.status!r}", err=True)
         raise SystemExit(3)
+    if as_cannot_link and decision != "reject":
+        click.echo("--as-cannot-link only applies with --reject.", err=True)
+        raise SystemExit(2)
 
     async def _decide(service, _storage):
         if decision == "accept":
@@ -305,5 +353,218 @@ def review_cmd(proposal_path: str, decision: str | None, reason: str | None) -> 
             for r in outcome:
                 click.echo(f"  {r.action_path} -> {r.final_status}")
             raise SystemExit(4)
+        return
+
+    click.echo("rejected.")
+    if not as_cannot_link:
+        return
+
+    # Extract subjects from the linked merge action draft and persist a
+    # cannot-link decision between them.
+    subjects = _subjects_from_proposal(proposal)
+    if subjects is None:
+        click.echo(
+            "could not derive subjects for cannot-link from proposal; "
+            "create the decision manually with `bsage canon decide`.",
+            err=True,
+        )
+        return
+
+    decision_path = _build_decision_path("cannot-link", "-".join(subjects))
+
+    async def _persist(service, _storage):
+        action_path = await service.create_action_draft(
+            kind="create-decision",
+            params={
+                "decision_path": decision_path,
+                "subjects": list(subjects),
+                "base_confidence": float(confidence),
+                "maturity": "seedling",
+            },
+        )
+        return await service.apply_action(action_path, actor="cli")
+
+    result = _run_with_service(_persist)
+    if result.final_status == "applied":
+        click.echo(f"cannot-link decision recorded: {decision_path}")
     else:
-        click.echo("rejected.")
+        click.echo(f"failed to record cannot-link decision: {result.final_status}", err=True)
+        raise SystemExit(5)
+
+
+def _subjects_from_proposal(proposal: Any) -> tuple[str, str] | None:
+    """Best-effort extraction of (a, b) from a merge-concepts proposal."""
+    if proposal.kind != "merge-concepts" or not proposal.action_drafts:
+        return None
+    # Decision subjects come from the linked action draft frontmatter
+    # — but the proposal evidence already names the canonical + alias pair.
+    canonical: str | None = None
+    merge: str | None = None
+    for ev in proposal.evidence:
+        payload = ev.get("payload") or {}
+        if ev.get("kind") == "alias_exact":
+            canonical = canonical or payload.get("matches_canonical")
+            merge = merge or payload.get("alias")
+            if canonical and merge:
+                break
+        if ev.get("kind") == "frequency":
+            canonical = canonical or payload.get("canonical")
+            merges = list(payload.get("merge_uses") or {})
+            if merges:
+                merge = merge or merges[0]
+    if canonical and merge:
+        return (canonical, merge)
+    return None
+
+
+def _build_decision_path(kind: str, slug: str) -> str:
+    """Generate a decisions/<kind>/<timestamp>-<slug>.md path."""
+    if not canon_paths.is_valid_concept_id(slug):
+        # Fall back: replace invalid chars
+        slug = "-".join(part for part in slug.split("-") if part) or "decision"
+    return canon_paths.build_decision_path(kind, datetime.now(), slug)
+
+
+# ---------------------------------------------------------- decisions/policies
+
+
+@canon_group.command("bootstrap-policies")
+def bootstrap_policies_cmd() -> None:
+    """Idempotently write the three default policy fixtures (Handoff §8.3-8.5)."""
+
+    async def _go(service, _storage):
+        return await service._policies.bootstrap_defaults()
+
+    created = _run_with_service(_go)
+    if not created:
+        click.echo("Default policies already present.")
+        return
+    click.echo(f"Created {len(created)} default policy file(s):")
+    for p in created:
+        click.echo(f"  {p}")
+
+
+@canon_group.command("decide")
+@click.argument("kind", type=click.Choice(["cannot-link", "must-link"]))
+@click.option(
+    "--subject",
+    "subjects",
+    multiple=True,
+    required=True,
+    help="Subject concept id (repeatable; usually exactly two).",
+)
+@click.option(
+    "--confidence",
+    type=float,
+    default=0.95,
+    show_default=True,
+    help="base_confidence (0..1).",
+)
+@click.option(
+    "--maturity",
+    type=click.Choice(["seedling", "budding", "evergreen"]),
+    default="seedling",
+    show_default=True,
+)
+@click.option(
+    "--decay-profile",
+    type=click.Choice(["definitional", "semantic", "episodic", "procedural", "affective"]),
+    default=None,
+    help="Override decay profile (default: definitional for cannot-link, semantic for must-link).",
+)
+def decide_cmd(
+    kind: str,
+    subjects: tuple[str, ...],
+    confidence: float,
+    maturity: str,
+    decay_profile: str | None,
+) -> None:
+    """Persist a cannot-link or must-link decision."""
+    if not subjects:
+        raise click.BadParameter("at least one --subject required")
+    slug = "-".join(subjects) or "decision"
+    decision_path = _build_decision_path(kind, slug)
+
+    async def _go(service, _storage):
+        params: dict[str, Any] = {
+            "decision_path": decision_path,
+            "subjects": list(subjects),
+            "base_confidence": float(confidence),
+            "maturity": maturity,
+        }
+        if decay_profile is not None:
+            params["decay_profile"] = decay_profile
+        action_path = await service.create_action_draft(kind="create-decision", params=params)
+        return await service.apply_action(action_path, actor="cli")
+
+    result = _run_with_service(_go)
+    if result.final_status == "applied":
+        click.echo(f"applied. {decision_path}")
+        return
+    click.echo(f"{result.final_status}: see {result.action_path}", err=True)
+    raise SystemExit(2)
+
+
+@canon_group.command("list-decisions")
+@click.option(
+    "--kind",
+    type=click.Choice(["cannot-link", "must-link"]),
+    default=None,
+    help="Optional kind filter.",
+)
+@click.option(
+    "--status",
+    type=click.Choice(["active", "superseded", "retracted", "expired"]),
+    default="active",
+    show_default=True,
+)
+def list_decisions_cmd(kind: str | None, status: str) -> None:
+    """List decision notes by kind / status."""
+
+    async def _go(service, _storage):
+        return await service._index.list_decisions(kind=kind, status=status)
+
+    decisions = _run_with_service(_go)
+    if not decisions:
+        click.echo(f"No decisions with status={status!r}.")
+        return
+    for d in decisions:
+        subjects = " + ".join(d.subjects)
+        click.echo(
+            f"  {d.path}  ({d.kind}, {subjects}, confidence={d.base_confidence:.2f}, "
+            f"profile={d.decay_profile})"
+        )
+
+
+@canon_group.command("decision-stats")
+def decision_stats_cmd() -> None:
+    """Summarize active decisions + average effective strength."""
+
+    async def _go(service, _storage):
+        memory = service._decisions
+        if memory is None:
+            return None
+        cannot = await memory.list_active_cannot_link()
+        must = await memory.list_active_must_link()
+        now = datetime.now()
+        avg_cannot = (
+            sum(memory.effective_strength(d, now=now) for d in cannot) / len(cannot)
+            if cannot
+            else 0.0
+        )
+        avg_must = (
+            sum(memory.effective_strength(d, now=now) for d in must) / len(must) if must else 0.0
+        )
+        return {
+            "cannot_link": (len(cannot), avg_cannot),
+            "must_link": (len(must), avg_must),
+        }
+
+    stats = _run_with_service(_go)
+    if stats is None:
+        click.echo("Decision memory not wired.", err=True)
+        raise SystemExit(2)
+    cl_n, cl_avg = stats["cannot_link"]
+    ml_n, ml_avg = stats["must_link"]
+    click.echo(f"cannot-link decisions: {cl_n} (effective avg {cl_avg:.2f})")
+    click.echo(f"must-link decisions: {ml_n} (effective avg {ml_avg:.2f})")

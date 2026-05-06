@@ -19,21 +19,28 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from bsage.garden.canonicalization import models, paths
+from bsage.garden.canonicalization.decisions import DecisionMemory
 from bsage.garden.canonicalization.index import CanonicalizationIndex
 from bsage.garden.canonicalization.lock import AsyncIOMutationLock
+from bsage.garden.canonicalization.policies import PolicyResolver
 from bsage.garden.canonicalization.resolver import TagResolver
 from bsage.garden.canonicalization.store import NoteStore
 
 _DEFAULT_EXPIRY = timedelta(days=1)
 # Action kinds available for ``create_action_draft`` + ``apply_action``.
-# Expands as later slices add kinds (slice 4 adds create-decision, etc.).
-_SUPPORTED_KINDS: frozenset[str] = frozenset({"create-concept", "retag-notes", "merge-concepts"})
+# Expands as later slices add kinds (split-concept, deprecate-concept, etc.).
+_SUPPORTED_KINDS: frozenset[str] = frozenset(
+    {"create-concept", "retag-notes", "merge-concepts", "create-decision"}
+)
 
 _ACTION_SCHEMA_VERSIONS: dict[str, str] = {
     "create-concept": "create-concept-v1",
     "retag-notes": "retag-notes-v1",
     "merge-concepts": "merge-concepts-v1",
+    "create-decision": "create-decision-v1",
 }
+
+_VALID_DECISION_MATURITIES: frozenset[str] = frozenset({"seedling", "budding", "evergreen"})
 
 # Default policies for MergeConcepts when params omit them (Handoff §7.2).
 _DEFAULT_MERGE_ALIAS_POLICY = {
@@ -85,12 +92,16 @@ class CanonicalizationService:
         *,
         index: CanonicalizationIndex | None = None,
         resolver: TagResolver | None = None,
+        decisions: DecisionMemory | None = None,
+        policies: PolicyResolver | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
         self._lock = lock
         self._index = index
         self._resolver = resolver
+        self._decisions = decisions
+        self._policies = policies
         self._clock = clock or datetime.now
 
     # ---------------------------------------------------------------- drafts
@@ -112,7 +123,13 @@ class CanonicalizationService:
             slug = self._derive_slug(kind, params)
 
         now = self._clock()
-        candidate = paths.build_action_path(kind, now, slug)
+        # CreateDecision uses an extra path segment for the decision kind
+        # (Handoff §7.8: actions/create-decision/<decision-kind>/<filename>).
+        if kind == "create-decision":
+            decision_kind = self._infer_decision_kind(params)
+            candidate = paths.build_create_decision_action_path(decision_kind, now, slug)
+        else:
+            candidate = paths.build_action_path(kind, now, slug)
         existing = await self._store.list_existing_action_paths(kind)
         action_path = paths.with_collision_suffix(candidate, existing)
 
@@ -145,8 +162,41 @@ class CanonicalizationService:
                 msg = f"merge-concepts needs valid 'canonical' param: {canonical!r}"
                 raise ValueError(msg)
             return canonical
+        if kind == "create-decision":
+            # Slug derived from decision_path stem (after the timestamp).
+            dp = params.get("decision_path", "")
+            stem = dp.rsplit("/", 1)[-1].removesuffix(".md")
+            # Strip leading YYYYMMDD-HHMMSS- if present
+            if (
+                len(stem) > 16
+                and stem[8] == "-"
+                and stem[15] == "-"
+                and stem[:8].isdigit()
+                and stem[9:15].isdigit()
+            ):
+                stem = stem[16:]
+            if not paths.is_valid_concept_id(stem):
+                # Fallback: use first subject if extraction fails
+                subjects = params.get("subjects") or []
+                stem = "-".join(s for s in subjects if isinstance(s, str)) or "decision"
+            return stem
         # retag-notes / other kinds: caller must supply slug
         msg = f"slug required for action kind {kind!r}"
+        raise ValueError(msg)
+
+    @staticmethod
+    def _infer_decision_kind(params: dict[str, Any]) -> str:
+        dp = params.get("decision_path", "")
+        if not isinstance(dp, str):
+            msg = "create-decision params.decision_path must be a string"
+            raise ValueError(msg)
+        # decision_path = decisions/<kind>/<filename>
+        parts = dp.split("/")
+        if len(parts) >= 3 and parts[0] == "decisions":
+            kind = parts[1]
+            if kind in paths.DECISION_KINDS:
+                return kind
+        msg = f"create-decision params.decision_path must start with decisions/<kind>/: {dp!r}"
         raise ValueError(msg)
 
     # ----------------------------------------------------------------- apply
@@ -393,6 +443,8 @@ class CanonicalizationService:
             await self._validate_retag_notes(entry, result)
         elif entry.kind == "merge-concepts":
             await self._validate_merge_concepts(entry, result)
+        elif entry.kind == "create-decision":
+            await self._validate_create_decision(entry, result)
         else:  # pragma: no cover — guarded by create_action_draft
             result.hard_blocks.append(_evidence("unsupported_action_kind", kind=entry.kind))
         if result.hard_blocks:
@@ -465,6 +517,98 @@ class CanonicalizationService:
         for old_id in merge:
             if not await self._store.concept_exists(old_id):
                 result.hard_blocks.append(_evidence("merge_target_not_active", merge=old_id))
+                return
+
+        # Cannot-link Hard Block (Handoff §7.2 + §8.5)
+        if self._decisions is not None:
+            threshold = await self._cannot_link_threshold()
+            for old_id in merge:
+                strength = await self._decisions.max_cannot_link_strength(
+                    (canonical, old_id), now=self._clock()
+                )
+                if strength >= threshold:
+                    result.hard_blocks.append(
+                        _evidence(
+                            "cannot_link_hard_block",
+                            canonical=canonical,
+                            merge=old_id,
+                            effective_strength=strength,
+                            threshold=threshold,
+                        )
+                    )
+
+    async def _cannot_link_threshold(self, default: float = 0.85) -> float:
+        if self._policies is None:
+            return default
+        try:
+            policy = await self._policies.select(kind="merge-auto-apply", scope={})
+        except Exception:  # noqa: BLE001 — policy_conflict bubbles up later
+            return default
+        if policy is None:
+            return default
+        return float(policy.params.get("hard_blocks", {}).get("cannot_link_threshold", default))
+
+    async def _validate_create_decision(
+        self,
+        entry: models.ActionEntry,
+        result: models.ValidationResult,
+    ) -> None:
+        params = entry.params
+        decision_path = params.get("decision_path")
+        if not isinstance(decision_path, str) or not decision_path.startswith("decisions/"):
+            result.hard_blocks.append(
+                _evidence("invalid_decision_path", decision_path=decision_path)
+            )
+            return
+        parts = decision_path.split("/")
+        if len(parts) < 3 or parts[1] not in paths.DECISION_KINDS:
+            result.hard_blocks.append(
+                _evidence("invalid_decision_kind", decision_path=decision_path)
+            )
+            return
+
+        subjects = params.get("subjects")
+        if not isinstance(subjects, list) or not subjects:
+            result.hard_blocks.append(_evidence("missing_subjects"))
+            return
+        for s in subjects:
+            if not isinstance(s, str) or not s.strip():
+                result.hard_blocks.append(_evidence("invalid_subject", subject=s))
+                return
+
+        base_confidence = params.get("base_confidence")
+        if not isinstance(base_confidence, (int, float)) or not (
+            0.0 <= float(base_confidence) <= 1.0
+        ):
+            result.hard_blocks.append(
+                _evidence("invalid_base_confidence", base_confidence=base_confidence)
+            )
+            return
+
+        maturity = params.get("maturity")
+        if maturity not in _VALID_DECISION_MATURITIES:
+            result.hard_blocks.append(_evidence("invalid_maturity", maturity=maturity))
+            return
+
+        decay_profile = params.get("decay_profile")
+        if decay_profile is not None and decay_profile not in models.DECAY_PROFILES:
+            result.hard_blocks.append(
+                _evidence("invalid_decay_profile", decay_profile=decay_profile)
+            )
+            return
+
+        # Supersede targets must exist
+        supersedes = params.get("supersedes") or []
+        if not isinstance(supersedes, list):
+            result.hard_blocks.append(_evidence("malformed_supersedes"))
+            return
+        for sup_path in supersedes:
+            if not isinstance(sup_path, str):
+                result.hard_blocks.append(_evidence("malformed_supersede_entry"))
+                return
+            existing = await self._store.read_decision(sup_path)
+            if existing is None:
+                result.hard_blocks.append(_evidence("supersede_target_missing", path=sup_path))
 
     # -------------------------------------------------------------- effects
 
@@ -475,6 +619,8 @@ class CanonicalizationService:
             return await self._effect_retag_notes(entry)
         if entry.kind == "merge-concepts":
             return await self._effect_merge_concepts(entry)
+        if entry.kind == "create-decision":
+            return await self._effect_create_decision(entry)
         msg = f"unsupported kind: {entry.kind!r}"  # pragma: no cover
         raise NotImplementedError(msg)
 
@@ -597,5 +743,57 @@ class CanonicalizationService:
                         rewritten.append(new)
                 await self._store.set_garden_tags(garden_path, rewritten)
                 affected.append(garden_path)
+
+        return affected
+
+    async def _effect_create_decision(self, entry: models.ActionEntry) -> list[str]:
+        params = entry.params
+        decision_path: str = params["decision_path"]
+        decision_kind = decision_path.split("/")[1]
+        subjects = tuple(s for s in params["subjects"] if isinstance(s, str))
+        base_confidence = float(params["base_confidence"])
+        maturity = params["maturity"]
+        decay_profile = params.get("decay_profile") or (
+            "definitional" if decision_kind == "cannot-link" else "semantic"
+        )
+        decay_halflife_days = params.get("decay_halflife_days")
+        supersedes = list(params.get("supersedes") or [])
+
+        now = self._clock()
+        affected: list[str] = []
+
+        # 1. Write the new decision note
+        decision = models.DecisionEntry(
+            path=decision_path,
+            kind=decision_kind,
+            status="active",
+            maturity=maturity,
+            decision_schema_version=f"{decision_kind}-v1",
+            subjects=subjects,
+            base_confidence=base_confidence,
+            last_confirmed_at=now,
+            decay_profile=decay_profile,
+            decay_halflife_days=decay_halflife_days,
+            valid_from=now,
+            created_at=now,
+            updated_at=now,
+            policy_profile_path=params.get("policy_profile_path"),
+            source_proposal=params.get("source_proposal"),
+            source_action=entry.path,
+            supersedes=supersedes,
+        )
+        await self._store.write_decision(decision)
+        affected.append(decision_path)
+
+        # 2. Mark each superseded decision (Handoff §7.8 — both paths in affected)
+        for sup_path in supersedes:
+            existing = await self._store.read_decision(sup_path)
+            if existing is None:
+                continue
+            existing.status = "superseded"
+            existing.superseded_by = decision_path
+            existing.updated_at = now
+            await self._store.write_decision(existing)
+            affected.append(sup_path)
 
         return affected

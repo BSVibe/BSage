@@ -66,6 +66,8 @@ class _UnionFind:
 class DeterministicProposer:
     """Generate `merge-concepts` proposals from active-concept similarity."""
 
+    _strategy_name: str = "deterministic"
+
     def __init__(
         self,
         index: CanonicalizationIndex,
@@ -85,7 +87,7 @@ class DeterministicProposer:
         if len(concepts) < 2:
             return []
 
-        clusters = self._cluster_by_similarity(concepts, self._threshold)
+        clusters = await self._collect_clusters(concepts)
 
         # Pre-compute frequency: canonical selection prefers higher garden usage
         usage = await self._garden_tag_frequency([c.concept_id for c in concepts])
@@ -101,7 +103,8 @@ class DeterministicProposer:
             signature = self._cluster_signature(canonical, merge)
             if signature in existing_proposals:
                 logger.debug(
-                    "deterministic_proposer_dedup",
+                    "proposer_dedup",
+                    strategy=self._strategy_name,
                     canonical=canonical,
                     merge=merge,
                 )
@@ -110,6 +113,57 @@ class DeterministicProposer:
             created.append(proposal_path)
             existing_proposals.add(signature)
         return created
+
+    # ------------------------------------------------ extension hooks
+
+    async def _collect_clusters(self, concepts: list[models.ConceptEntry]) -> list[list[str]]:
+        """Return clusters of concept ids to consider for merging.
+
+        Overridable: ``BalancedProposer`` augments this with embedding KNN
+        candidates and filters by cannot-link decisions.
+        """
+        return self._cluster_by_similarity(concepts, self._threshold)
+
+    async def _evidence_for_cluster(
+        self,
+        canonical: str,
+        merge: list[str],
+        usage: dict[str, int],
+    ) -> list[dict[str, Any]]:
+        """Build the evidence list attached to the proposal.
+
+        Overridable: ``BalancedProposer`` adds ``embedding_knn`` and
+        ``llm_verify`` envelopes (source=model) on top of the deterministic
+        ``alias_exact`` + ``frequency`` items.
+        """
+        now = self._clock()
+        evidence: list[dict[str, Any]] = []
+        for old_id in merge:
+            evidence.append(
+                _envelope(
+                    kind="alias_exact",
+                    schema_version="alias-exact-v1",
+                    payload={
+                        "alias": old_id,
+                        "matches_canonical": canonical,
+                        "garden_uses_old": usage.get(old_id, 0),
+                    },
+                    observed_at=now,
+                )
+            )
+        evidence.append(
+            _envelope(
+                kind="frequency",
+                schema_version="frequency-v1",
+                payload={
+                    "canonical": canonical,
+                    "uses": usage.get(canonical, 0),
+                    "merge_uses": {old: usage.get(old, 0) for old in merge},
+                },
+                observed_at=now,
+            )
+        )
+        return evidence
 
     # --------------------------------------------------- similarity helpers
 
@@ -180,34 +234,7 @@ class DeterministicProposer:
         usage: dict[str, int],
     ) -> str:
         now = self._clock()
-
-        # Build evidence — alias collisions + frequency observations
-        evidence: list[dict[str, Any]] = []
-        for old_id in merge:
-            evidence.append(
-                _envelope(
-                    kind="alias_exact",
-                    schema_version="alias-exact-v1",
-                    payload={
-                        "alias": old_id,
-                        "matches_canonical": canonical,
-                        "garden_uses_old": usage.get(old_id, 0),
-                    },
-                    observed_at=now,
-                )
-            )
-        evidence.append(
-            _envelope(
-                kind="frequency",
-                schema_version="frequency-v1",
-                payload={
-                    "canonical": canonical,
-                    "uses": usage.get(canonical, 0),
-                    "merge_uses": {old: usage.get(old, 0) for old in merge},
-                },
-                observed_at=now,
-            )
-        )
+        evidence = await self._evidence_for_cluster(canonical, merge, usage)
 
         # Create paired action draft via the existing draft pathway. The
         # service path handles collision suffix + index invalidation.
@@ -227,7 +254,7 @@ class DeterministicProposer:
             path=proposal_path,
             kind="merge-concepts",
             status="pending",
-            strategy="deterministic",
+            strategy=self._strategy_name,
             generator=_GENERATOR_NAME,
             generator_version=_GENERATOR_VERSION,
             proposal_score=proposal_score,
@@ -295,12 +322,227 @@ def _envelope(
     schema_version: str,
     payload: dict[str, Any],
     observed_at: datetime,
+    source: str = "deterministic",
+    producer: str = _GENERATOR_NAME,
 ) -> dict[str, Any]:
     return {
         "kind": kind,
         "schema_version": schema_version,
-        "source": "deterministic",
+        "source": source,
         "observed_at": observed_at.isoformat(),
-        "producer": _GENERATOR_NAME,
+        "producer": producer,
         "payload": payload,
     }
+
+
+# ============================================================================
+# BalancedProposer (Handoff §11 balanced strategy + §12)
+# ============================================================================
+
+# Type aliases — kept loose so both sync mocks and real async clients fit.
+EmbedderFn = Any  # async (list[str]) -> list[list[float]]
+VerifierFn = Any  # async (a, b) -> {"verdict": str, "confidence": float}
+
+_BALANCED_GENERATOR = "balanced-v1"
+_DEFAULT_EMBEDDING_TOP_K = 5
+_DEFAULT_EMBEDDING_THRESHOLD = 0.85
+_DEFAULT_CANNOT_LINK_THRESHOLD = 0.85
+
+
+class BalancedProposer(DeterministicProposer):
+    """Deterministic preprocessing + embedding KNN + selective LLM verify.
+
+    Per Handoff §12 — ``balanced`` is the default first-implementation
+    strategy. Slice 4 ships the schema/wiring with pluggable callables;
+    slice 5 wires real Embedder + LiteLLM clients at gateway boot.
+
+    Constructor accepts:
+    - ``embedder``: async ``(list[str]) -> list[list[float]]``. None disables
+      embedding KNN augmentation.
+    - ``verifier``: async ``(a, b) -> {verdict, confidence}``. None disables
+      LLM verify evidence.
+    - ``decisions``: ``DecisionMemory``. When set, candidate pairs whose
+      effective cannot-link strength is at/above ``cannot_link_threshold``
+      are dropped before proposal generation (proposer-stage suppression).
+    """
+
+    _strategy_name = "balanced"
+
+    def __init__(
+        self,
+        index: CanonicalizationIndex,
+        store: NoteStore,
+        clock: Callable[[], datetime] | None = None,
+        threshold: float = _DEFAULT_THRESHOLD,
+        embedder: EmbedderFn | None = None,
+        verifier: VerifierFn | None = None,
+        decisions: Any | None = None,  # DecisionMemory; Any to avoid import cycle
+        embedding_top_k: int = _DEFAULT_EMBEDDING_TOP_K,
+        embedding_threshold: float = _DEFAULT_EMBEDDING_THRESHOLD,
+        cannot_link_threshold: float = _DEFAULT_CANNOT_LINK_THRESHOLD,
+    ) -> None:
+        super().__init__(index=index, store=store, clock=clock, threshold=threshold)
+        self._embedder = embedder
+        self._verifier = verifier
+        self._decisions = decisions
+        self._embedding_top_k = embedding_top_k
+        self._embedding_threshold = embedding_threshold
+        self._cannot_link_threshold = cannot_link_threshold
+        self._embedding_pairs: dict[tuple[str, str], float] = {}
+
+    # ----------------------------------------------- cluster collection
+
+    async def _collect_clusters(self, concepts: list[models.ConceptEntry]) -> list[list[str]]:
+        clusters = await super()._collect_clusters(concepts)
+
+        # Optional embedding-KNN augmentation
+        if self._embedder is not None:
+            extra_pairs = await self._embedding_neighbor_pairs(concepts)
+            if extra_pairs:
+                ids = [c.concept_id for c in concepts]
+                uf = _UnionFind(ids)
+                # Seed with deterministic clusters so they merge with KNN edges
+                for group in clusters:
+                    for i in range(len(group) - 1):
+                        uf.union(group[i], group[i + 1])
+                for (a, b), _cosine in extra_pairs.items():
+                    uf.union(a, b)
+                clusters = [g for g in uf.groups() if len(g) > 1]
+
+        # Optional cannot-link suppression
+        if self._decisions is not None:
+            clusters = await self._filter_by_cannot_link(clusters)
+        return clusters
+
+    async def _embedding_neighbor_pairs(
+        self, concepts: list[models.ConceptEntry]
+    ) -> dict[tuple[str, str], float]:
+        """Compute cosine-similar pairs above threshold via the embedder.
+
+        Result is cached on ``self._embedding_pairs`` so the evidence hook
+        can decorate proposals without re-embedding.
+        """
+        if self._embedder is None:
+            return {}
+        ids = [c.concept_id for c in concepts]
+        try:
+            vectors = await self._embedder(ids)
+        except Exception as exc:  # noqa: BLE001 — never abort proposer on embed error
+            logger.warning("balanced_proposer_embed_failed", error=str(exc))
+            return {}
+        if len(vectors) != len(ids):
+            logger.warning(
+                "balanced_proposer_embed_shape_mismatch",
+                expected=len(ids),
+                got=len(vectors),
+            )
+            return {}
+        norms = [_l2_norm(v) for v in vectors]
+        pairs: dict[tuple[str, str], float] = {}
+        for i in range(len(ids)):
+            if norms[i] == 0.0:
+                continue
+            for j in range(i + 1, len(ids)):
+                if norms[j] == 0.0:
+                    continue
+                cos = _dot(vectors[i], vectors[j]) / (norms[i] * norms[j])
+                if cos >= self._embedding_threshold:
+                    key = tuple(sorted((ids[i], ids[j])))
+                    pairs[key] = cos
+        self._embedding_pairs = pairs
+        return pairs
+
+    async def _filter_by_cannot_link(self, clusters: list[list[str]]) -> list[list[str]]:
+        """Drop entire clusters where any pair hits the cannot-link threshold."""
+        if self._decisions is None:
+            return clusters
+        kept: list[list[str]] = []
+        for cluster in clusters:
+            blocked = False
+            for i, a in enumerate(cluster):
+                for b in cluster[i + 1 :]:
+                    strength = await self._decisions.max_cannot_link_strength(
+                        (a, b), now=self._clock()
+                    )
+                    if strength >= self._cannot_link_threshold:
+                        logger.debug(
+                            "balanced_proposer_cluster_dropped",
+                            pair=(a, b),
+                            cannot_link_strength=strength,
+                        )
+                        blocked = True
+                        break
+                if blocked:
+                    break
+            if not blocked:
+                kept.append(cluster)
+        return kept
+
+    # ------------------------------------------------- evidence layer
+
+    async def _evidence_for_cluster(
+        self, canonical: str, merge: list[str], usage: dict[str, int]
+    ) -> list[dict[str, Any]]:
+        evidence = await super()._evidence_for_cluster(canonical, merge, usage)
+        now = self._clock()
+
+        # Embedding KNN evidence (source=model — embedding output is model-derived)
+        for old_id in merge:
+            key = tuple(sorted((canonical, old_id)))
+            cosine = self._embedding_pairs.get(key)
+            if cosine is None:
+                continue
+            evidence.append(
+                _envelope(
+                    kind="embedding_knn",
+                    schema_version="embedding-knn-v1",
+                    payload={
+                        "pair": list(key),
+                        "cosine": round(float(cosine), 4),
+                        "top_k": self._embedding_top_k,
+                        "threshold": self._embedding_threshold,
+                    },
+                    observed_at=now,
+                    source="model",
+                    producer=_BALANCED_GENERATOR,
+                )
+            )
+
+        # LLM verify evidence (source=model)
+        if self._verifier is not None:
+            for old_id in merge:
+                try:
+                    verdict = await self._verifier(canonical, old_id)
+                except Exception as exc:  # noqa: BLE001 — verify failure logged, not fatal
+                    logger.warning(
+                        "balanced_proposer_verify_failed",
+                        pair=(canonical, old_id),
+                        error=str(exc),
+                    )
+                    continue
+                if not isinstance(verdict, dict):
+                    continue
+                evidence.append(
+                    _envelope(
+                        kind="llm_verify",
+                        schema_version="llm-verify-v1",
+                        payload={
+                            "pair": [canonical, old_id],
+                            "verdict": verdict.get("verdict"),
+                            "confidence": verdict.get("confidence"),
+                            "explanation": verdict.get("explanation"),
+                        },
+                        observed_at=now,
+                        source="model",
+                        producer=_BALANCED_GENERATOR,
+                    )
+                )
+        return evidence
+
+
+def _dot(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b, strict=True))
+
+
+def _l2_norm(v: list[float]) -> float:
+    return sum(x * x for x in v) ** 0.5

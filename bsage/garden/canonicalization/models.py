@@ -147,14 +147,17 @@ class ValidationResult:
 class ScoreResult:
     """Scoring outcome embedded in action frontmatter (Handoff §6, §13).
 
+    Per §13 — required fields: stability_score, hard_blocks, risk_reasons,
+    deterministic_evidence, model_evidence, human_evidence, scorer_version.
     Slice 1 leaves all fields at default. Slice 4 fills these from
-    deterministic + model + human evidence.
+    deterministic evidence; slice 5 adds model + human signals.
     """
 
     status: str = "not_run"
     stability_score: float | None = None
     scorer_version: str | None = None
     policy_profile_path: str | None = None
+    hard_blocks: list[dict[str, Any]] = field(default_factory=list)
     risk_reasons: list[dict[str, Any]] = field(default_factory=list)
     deterministic_evidence: list[dict[str, Any]] = field(default_factory=list)
     model_evidence: list[dict[str, Any]] = field(default_factory=list)
@@ -221,3 +224,83 @@ class ApplyResult:
     affected_paths: list[str]
     domain_effects: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+
+
+# Per Handoff §8.1
+DECISION_STATUSES: tuple[str, ...] = (
+    "active",
+    "superseded",
+    "retracted",
+    "expired",
+)
+
+# Per Handoff §8.1
+DECAY_PROFILES: tuple[str, ...] = (
+    "definitional",
+    "semantic",
+    "episodic",
+    "procedural",
+    "affective",
+)
+
+
+@dataclass
+class DecisionEntry:
+    """Decision-memory note (Handoff §8.1).
+
+    ``cannot-link`` defaults to ``decay.profile: definitional`` (no decay).
+    ``effective_strength`` is computed by ``DecisionMemory`` using the
+    existing ``bsage.garden.confidence`` decay model:
+    ``base_confidence * 0.5 ** (days_since_confirmed / halflife_days)``.
+    """
+
+    path: str
+    kind: str
+    status: str
+    maturity: str
+    decision_schema_version: str
+    subjects: tuple[str, ...]
+    base_confidence: float
+    last_confirmed_at: datetime
+    decay_profile: str
+    decay_halflife_days: int | None
+    valid_from: datetime
+    created_at: datetime
+    updated_at: datetime
+    review_after: datetime | None = None
+    expires_at: datetime | None = None
+    policy_profile_path: str | None = None
+    source_proposal: str | None = None
+    source_action: str | None = None
+    supersedes: list[str] = field(default_factory=list)
+    superseded_by: str | None = None
+
+
+# Per Handoff §8.2
+POLICY_STATUSES: tuple[str, ...] = (
+    "active",
+    "superseded",
+    "expired",
+    "draft",
+)
+
+
+@dataclass
+class PolicyEntry:
+    """Policy-profile note (Handoff §8.2)."""
+
+    path: str
+    kind: str
+    status: str
+    profile_name: str
+    priority: int
+    scope: dict[str, Any]
+    policy_schema_version: str
+    valid_from: datetime
+    params: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime | None = None
+    learned_from: dict[str, Any] = field(default_factory=dict)
+    supersedes: list[str] = field(default_factory=list)
+    superseded_by: str | None = None

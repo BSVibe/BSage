@@ -146,6 +146,7 @@ class NoteStore:
                 stability_score=scoring_fm.get("stability_score"),
                 scorer_version=scoring_fm.get("scorer_version"),
                 policy_profile_path=scoring_fm.get("policy_profile_path"),
+                hard_blocks=list(scoring_fm.get("hard_blocks") or []),
                 risk_reasons=list(scoring_fm.get("risk_reasons") or []),
                 deterministic_evidence=list(scoring_fm.get("deterministic_evidence") or []),
                 model_evidence=list(scoring_fm.get("model_evidence") or []),
@@ -276,6 +277,120 @@ class NoteStore:
         """All garden notes across maturity folders."""
         return list(await self._storage.list_files("garden", "*.md"))
 
+    # ----------------------------------------------------------------- decisions
+
+    async def read_decision(self, path: str) -> models.DecisionEntry | None:
+        if not await self._storage.exists(path):
+            return None
+        text = await self._storage.read(path)
+        fm = extract_frontmatter(text)
+        kind = self._decision_kind_from_path(path)
+        decay_fm = fm.get("decay") or {}
+        return models.DecisionEntry(
+            path=path,
+            kind=kind,
+            status=fm.get("status", "active"),
+            maturity=fm.get("maturity", "seedling"),
+            decision_schema_version=fm.get("decision_schema_version", ""),
+            subjects=tuple(fm.get("subjects") or ()),
+            base_confidence=float(fm.get("base_confidence") or 0.0),
+            last_confirmed_at=_parse_iso(fm.get("last_confirmed_at")) or datetime.min,
+            decay_profile=decay_fm.get("profile", "definitional"),
+            decay_halflife_days=decay_fm.get("halflife_days"),
+            valid_from=_parse_iso(fm.get("valid_from")) or datetime.min,
+            created_at=_parse_iso(fm.get("created_at")) or datetime.min,
+            updated_at=_parse_iso(fm.get("updated_at")) or datetime.min,
+            review_after=_parse_iso(fm.get("review_after")),
+            expires_at=_parse_iso(fm.get("expires_at")),
+            policy_profile_path=fm.get("policy_profile_path"),
+            source_proposal=fm.get("source_proposal"),
+            source_action=fm.get("source_action"),
+            supersedes=list(fm.get("supersedes") or []),
+            superseded_by=fm.get("superseded_by"),
+        )
+
+    async def write_decision(self, entry: models.DecisionEntry, body: str = "") -> None:
+        # Handoff §0.2: decision kind is path-derived. No decision_type.
+        fm: dict[str, Any] = {
+            "status": entry.status,
+            "maturity": entry.maturity,
+            "created_at": _iso(entry.created_at),
+            "updated_at": _iso(entry.updated_at),
+            "decision_schema_version": entry.decision_schema_version,
+            "subjects": list(entry.subjects),
+            "base_confidence": entry.base_confidence,
+            "last_confirmed_at": _iso(entry.last_confirmed_at),
+            "decay": {
+                "profile": entry.decay_profile,
+                "halflife_days": entry.decay_halflife_days,
+            },
+            "valid_from": _iso(entry.valid_from),
+            "review_after": _iso(entry.review_after) if entry.review_after else None,
+            "expires_at": _iso(entry.expires_at) if entry.expires_at else None,
+            "supersedes": list(entry.supersedes),
+            "superseded_by": entry.superseded_by,
+        }
+        if entry.policy_profile_path is not None:
+            fm["policy_profile_path"] = entry.policy_profile_path
+        if entry.source_proposal is not None:
+            fm["source_proposal"] = entry.source_proposal
+        if entry.source_action is not None:
+            fm["source_action"] = entry.source_action
+        text = build_frontmatter(fm) + (body or "")
+        await self._storage.write(entry.path, text)
+
+    async def list_existing_decision_paths(self, decision_kind: str) -> set[str]:
+        return set(await self._storage.list_files(f"decisions/{decision_kind}", "*.md"))
+
+    # ------------------------------------------------------------------ policies
+
+    async def read_policy(self, path: str) -> models.PolicyEntry | None:
+        if not await self._storage.exists(path):
+            return None
+        text = await self._storage.read(path)
+        fm = extract_frontmatter(text)
+        kind = self._policy_kind_from_path(path)
+        return models.PolicyEntry(
+            path=path,
+            kind=kind,
+            status=fm.get("status", "active"),
+            profile_name=fm.get("profile_name", ""),
+            priority=int(fm.get("priority") or 0),
+            scope=dict(fm.get("scope") or {}),
+            policy_schema_version=fm.get("policy_schema_version", ""),
+            valid_from=_parse_iso(fm.get("valid_from")) or datetime.min,
+            params=dict(fm.get("params") or {}),
+            created_at=_parse_iso(fm.get("created_at")) or datetime.min,
+            updated_at=_parse_iso(fm.get("updated_at")) or datetime.min,
+            expires_at=_parse_iso(fm.get("expires_at")),
+            learned_from=dict(fm.get("learned_from") or {}),
+            supersedes=list(fm.get("supersedes") or []),
+            superseded_by=fm.get("superseded_by"),
+        )
+
+    async def write_policy(self, entry: models.PolicyEntry, body: str = "") -> None:
+        # Handoff §0.2: policy kind is path-derived. No policy_type.
+        fm: dict[str, Any] = {
+            "status": entry.status,
+            "created_at": _iso(entry.created_at),
+            "updated_at": _iso(entry.updated_at),
+            "policy_schema_version": entry.policy_schema_version,
+            "profile_name": entry.profile_name,
+            "priority": entry.priority,
+            "scope": dict(entry.scope),
+            "valid_from": _iso(entry.valid_from),
+            "expires_at": _iso(entry.expires_at) if entry.expires_at else None,
+            "params": dict(entry.params),
+            "learned_from": dict(entry.learned_from),
+            "supersedes": list(entry.supersedes),
+            "superseded_by": entry.superseded_by,
+        }
+        text = build_frontmatter(fm) + (body or "")
+        await self._storage.write(entry.path, text)
+
+    async def list_existing_policy_paths(self, policy_kind: str) -> set[str]:
+        return set(await self._storage.list_files(f"decisions/policy/{policy_kind}", "*.md"))
+
     # ------------------------------------------------------------------- garden
 
     async def read_garden_tags(self, garden_path: str) -> list[str]:
@@ -316,3 +431,20 @@ class NoteStore:
             msg = f"not a proposal path: {path!r}"
             raise ValueError(msg)
         return parts[1]
+
+    @staticmethod
+    def _decision_kind_from_path(path: str) -> str:
+        parts = PurePosixPath(path).parts
+        if len(parts) < 3 or parts[0] != "decisions" or parts[1] == "policy":
+            msg = f"not a decision path: {path!r}"
+            raise ValueError(msg)
+        return parts[1]
+
+    @staticmethod
+    def _policy_kind_from_path(path: str) -> str:
+        # decisions/policy/<policy-kind>/<profile>.md
+        parts = PurePosixPath(path).parts
+        if len(parts) < 4 or parts[0] != "decisions" or parts[1] != "policy":
+            msg = f"not a policy path: {path!r}"
+            raise ValueError(msg)
+        return parts[2]

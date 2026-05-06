@@ -72,6 +72,17 @@ class CanonicalizationIndex(ABC):
         self, normalized_tag: str
     ) -> models.ActionEntry | None: ...
 
+    # Decision / policy lookup
+    @abstractmethod
+    async def list_decisions(
+        self, *, kind: str | None = None, status: str | None = None
+    ) -> list[models.DecisionEntry]: ...
+
+    @abstractmethod
+    async def list_policies(
+        self, *, kind: str | None = None, status: str | None = None
+    ) -> list[models.PolicyEntry]: ...
+
     # Lifecycle
     @abstractmethod
     async def invalidate(self, path: str) -> None: ...
@@ -97,6 +108,8 @@ class InMemoryCanonicalizationIndex(CanonicalizationIndex):
         self._tombstones: dict[str, models.TombstoneEntry] = {}
         self._deprecated: dict[str, models.DeprecatedEntry] = {}
         self._actions: dict[str, models.ActionEntry] = {}
+        self._decisions: dict[str, models.DecisionEntry] = {}
+        self._policies: dict[str, models.PolicyEntry] = {}
 
     async def initialize(self, storage: StorageBackend) -> None:
         self._storage = storage
@@ -109,6 +122,8 @@ class InMemoryCanonicalizationIndex(CanonicalizationIndex):
         self._deprecated.clear()
         self._actions.clear()
         self._proposals.clear()
+        self._decisions.clear()
+        self._policies.clear()
         self._storage = None
 
     # --------------------------------------------------------------- queries
@@ -163,6 +178,30 @@ class InMemoryCanonicalizationIndex(CanonicalizationIndex):
             out.append(entry)
         return out
 
+    async def list_decisions(
+        self, *, kind: str | None = None, status: str | None = None
+    ) -> list[models.DecisionEntry]:
+        out: list[models.DecisionEntry] = []
+        for entry in self._decisions.values():
+            if kind is not None and entry.kind != kind:
+                continue
+            if status is not None and entry.status != status:
+                continue
+            out.append(entry)
+        return out
+
+    async def list_policies(
+        self, *, kind: str | None = None, status: str | None = None
+    ) -> list[models.PolicyEntry]:
+        out: list[models.PolicyEntry] = []
+        for entry in self._policies.values():
+            if kind is not None and entry.kind != kind:
+                continue
+            if status is not None and entry.status != status:
+                continue
+            out.append(entry)
+        return out
+
     # ----------------------------------------------------------- mutation
 
     async def invalidate(self, path: str) -> None:
@@ -179,6 +218,8 @@ class InMemoryCanonicalizationIndex(CanonicalizationIndex):
         self._deprecated.clear()
         self._actions.clear()
         self._proposals.clear()
+        self._decisions.clear()
+        self._policies.clear()
 
         store = NoteStore(storage)
         for path in await storage.list_files("concepts/active"):
@@ -202,6 +243,16 @@ class InMemoryCanonicalizationIndex(CanonicalizationIndex):
             proposal = await store.read_proposal(path)
             if proposal is not None:
                 self._proposals[path] = proposal
+        # decisions/<kind>/... AND decisions/policy/<kind>/<profile>.md
+        for path in await storage.list_files("decisions"):
+            if path.startswith("decisions/policy/"):
+                policy = await store.read_policy(path)
+                if policy is not None:
+                    self._policies[path] = policy
+            else:
+                decision = await store.read_decision(path)
+                if decision is not None:
+                    self._decisions[path] = decision
 
     # ----------------------------------------------------------- helpers
 
@@ -235,6 +286,18 @@ class InMemoryCanonicalizationIndex(CanonicalizationIndex):
                 proposal = await store.read_proposal(path)
                 if proposal is not None:
                     self._proposals[path] = proposal
+        elif path.startswith("decisions/policy/"):
+            self._policies.pop(path, None)
+            if exists:
+                policy = await store.read_policy(path)
+                if policy is not None:
+                    self._policies[path] = policy
+        elif path.startswith("decisions/"):
+            self._decisions.pop(path, None)
+            if exists:
+                decision = await store.read_decision(path)
+                if decision is not None:
+                    self._decisions[path] = decision
         elif path.startswith("actions/"):
             self._actions.pop(path, None)
             if exists:
