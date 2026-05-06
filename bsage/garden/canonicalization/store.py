@@ -165,6 +165,7 @@ class NoteStore:
             affected_paths=list(fm.get("affected_paths") or []),
             supersedes=list(fm.get("supersedes") or []),
             superseded_by=fm.get("superseded_by"),
+            evidence=list(fm.get("evidence") or []),
         )
 
     async def write_action(self, entry: models.ActionEntry, body: str = "") -> None:
@@ -184,6 +185,7 @@ class NoteStore:
             "affected_paths": list(entry.affected_paths),
             "supersedes": list(entry.supersedes),
             "superseded_by": entry.superseded_by,
+            "evidence": list(entry.evidence),
         }
         if entry.source_proposal is not None:
             fm["source_proposal"] = entry.source_proposal
