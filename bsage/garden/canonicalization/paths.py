@@ -32,6 +32,12 @@ PROPOSAL_KINDS: frozenset[str] = frozenset(
     }
 )
 
+# Per Handoff §8.1
+DECISION_KINDS: frozenset[str] = frozenset({"cannot-link", "must-link"})
+
+# Per Handoff §8.2
+POLICY_KINDS: frozenset[str] = frozenset({"staleness", "merge-auto-apply", "decision-maturity"})
+
 
 def is_valid_concept_id(concept_id: str) -> bool:
     """Return True if the string matches the concept id regex (Handoff §2)."""
@@ -116,3 +122,30 @@ def build_proposal_path(proposal_kind: str, dt: datetime, slug: str) -> str:
         msg = f"unknown proposal kind: {proposal_kind!r}"
         raise ValueError(msg)
     return f"proposals/{proposal_kind}/{build_action_filename(dt, slug)}"
+
+
+def build_decision_path(decision_kind: str, dt: datetime, slug: str) -> str:
+    """Construct ``decisions/<kind>/<filename>`` (Handoff §8.1)."""
+    if decision_kind not in DECISION_KINDS:
+        msg = f"unknown decision kind: {decision_kind!r}"
+        raise ValueError(msg)
+    return f"decisions/{decision_kind}/{build_action_filename(dt, slug)}"
+
+
+def build_create_decision_action_path(decision_kind: str, dt: datetime, slug: str) -> str:
+    """Construct ``actions/create-decision/<kind>/<filename>`` (Handoff §7.8)."""
+    if decision_kind not in DECISION_KINDS:
+        msg = f"unknown decision kind: {decision_kind!r}"
+        raise ValueError(msg)
+    return f"actions/create-decision/{decision_kind}/{build_action_filename(dt, slug)}"
+
+
+def build_policy_path(policy_kind: str, profile_name: str) -> str:
+    """Construct ``decisions/policy/<kind>/<profile>.md`` (Handoff §8.2)."""
+    if policy_kind not in POLICY_KINDS:
+        msg = f"unknown policy kind: {policy_kind!r}"
+        raise ValueError(msg)
+    if not is_valid_concept_id(profile_name):
+        msg = f"invalid policy profile name: {profile_name!r}"
+        raise ValueError(msg)
+    return f"decisions/policy/{policy_kind}/{profile_name}.md"
